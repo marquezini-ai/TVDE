@@ -1,0 +1,4 @@
+# Copie este ficheiro para .gradle/license.properties antes de gerar os APKs.
+# Nunca coloque a chave privada no repositório, no Cliente ou no ZIP do código-fonte.
+licensePublicKeyBase64=PUBLIC_KEY_X509_BASE64
+adminPrivateKeyBase64=PRIVATE_KEY_PKCS8_BASE64

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path
+        name="shared_logs"
+        path="shared-logs/" />
+    <files-path name="local_recordings" path="recordings/" />
+    <external-files-path name="sd_recordings" path="recordings/" />
+    <external-files-path name="legacy_sd_recordings" path="Movies/recordings/" />
+</paths>

@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Necessária para o WorkManager avaliar a restrição NetworkType.CONNECTED. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Alarmes horários pontuais para sincronização com o Google Sheets. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Permite pedir ao utilizador que retire a otimização de bateria para o monitor funcionar em segundo plano. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- A posição do telefone é registada no histórico das duas apps. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <!-- A análise continua disponível em aparelhos sem câmera; apenas a gravação fica indisponível. -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+
+    <!-- Android 11+ limita consultas ao gestor de pacotes. Sem esta entrada,
+         getLaunchIntentForPackage pode devolver null mesmo com a Uber instalada. -->
+    <queries>
+        <package android:name="com.ubercab.driver" />
+        <package android:name="ee.mtakso.driver" />
+        <package android:name="com.whatsapp" />
+        <package android:name="com.google.android.apps.maps" />
+    </queries>
+
+    <application
+        android:name=".TvdeInsightApplication"
+        android:allowBackup="true"
+        android:label="@string/app_name"
+        android:icon="@mipmap/tvdeinsight"
+        android:roundIcon="@mipmap/tvdeinsight_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.TVDEInsight">
+
+        <!-- A configuração é fornecida por TvdeInsightApplication; evita a inicialização automática duplicada. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            tools:node="remove" />
+
+        <service
+            android:name=".service.accessibility.UberOfferAccessibilityService"
+            android:description="@string/accessibility_service_description"
+            android:exported="false"
+            android:label="@string/accessibility_service_label"
+            android:stopWithTask="false"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/uber_offer_accessibility_service" />
+        </service>
+
+        <service
+            android:name=".reservations.FloatingControlService"
+            android:exported="false"
+            android:label="@string/app_name" />
+
+        <service
+            android:name="com.example.cameraseguranca.service.RecordingService"
+            android:exported="false"
+            android:foregroundServiceType="camera|location|microphone"
+            android:stopWithTask="false" />
+
+        <service
+            android:name="com.example.cameraseguranca.service.OverlayService"
+            android:exported="false"
+            android:stopWithTask="false" />
+
+        <service
+            android:name="com.example.cameraseguranca.service.RecordingCleanupJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <receiver
+            android:name=".worker.SheetsSyncAlarmReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
+        <receiver
+            android:name=".worker.SheetsRescheduleReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity android:name="com.example.cameraseguranca.RecordingsActivity" android:exported="false" />
+        <activity android:name="com.example.cameraseguranca.MainActivity" android:exported="false" />
+        <activity android:name="com.example.cameraseguranca.VideoPlayerActivity" android:exported="false" />
+        <activity android:name="com.example.cameraseguranca.PanicRecordingActivity" android:exported="false" />
+    </application>
+</manifest>

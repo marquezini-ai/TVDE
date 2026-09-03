@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Gravações internas: files/recordings -->
+    <files-path name="local_recordings" path="recordings/" />
+    <!-- Gravações no volume removível: Android/data/<pacote>/files/recordings -->
+    <external-files-path name="sd_recordings" path="recordings/" />
+    <!-- Apenas para leitura dos vídeos privados criados pela versão anterior. -->
+    <external-files-path name="legacy_sd_recordings" path="Movies/recordings/" />
+</paths>

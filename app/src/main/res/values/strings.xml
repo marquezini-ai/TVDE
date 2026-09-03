@@ -1,0 +1,7 @@
+<resources>
+    <!-- Nome do Serviço de Acessibilidade exibido nas Definições do Android -->
+    <string name="accessibility_service_label">TVDE Insight - Leitura de Ofertas</string>
+    <string name="accessibility_service_description">Analisa automaticamente o valor por km e por hora das viagens na Uber e Bolt.</string>
+    <string name="canal_automacao">Controlo de Reservas Bolt</string>
+    <string name="canal_reservas">Reservas Bolt confirmadas</string>
+</resources>
