@@ -22,7 +22,17 @@ class UberOfferCardTextExtractor {
     /** Card encontrado no frame. A apresentação do overlay não depende do OCR. */
     data class ExtractedCard(
         val text: String,
-        val category: String?
+        val category: String?,
+        /** Bounds in the bitmap passed to ML Kit. Used only to crop a cheap
+         * independent confirmation pass; it is never used to position UI. */
+        val bounds: OcrBounds? = null
+    )
+
+    data class OcrBounds(
+        val left: Int,
+        val top: Int,
+        val right: Int,
+        val bottom: Int
     )
 
     fun extract(visionText: Text): String? = extractCard(visionText)?.text
@@ -55,14 +65,14 @@ class UberOfferCardTextExtractor {
         // pelos elementos poderia anexar um selo vizinho (por exemplo,
         // "Exclusivo") quando ambos aparecem à mesma altura.
         val category = candidate.category ?: extractCategoryFromTokens(tokens, candidate.priceBlock)
-        return ExtractedCard(candidate.text, category)
+        return ExtractedCard(candidate.text, category, candidate.bounds)
     }
 
     /** Mantido para testes puros, sem depender do runtime do ML Kit. */
     fun extract(blocks: List<OcrBlock>): String? = extractCandidate(blocks)?.text
 
     internal fun extractCard(blocks: List<OcrBlock>): ExtractedCard? =
-        extractCandidate(blocks)?.let { ExtractedCard(it.text, it.category) }
+        extractCandidate(blocks)?.let { ExtractedCard(it.text, it.category, it.bounds) }
 
     private fun extractCandidate(blocks: List<OcrBlock>): Candidate? {
         if (blocks.isEmpty()) return null
@@ -140,11 +150,21 @@ class UberOfferCardTextExtractor {
         if (!PASSENGER_TRIP_SEGMENT_REGEX.containsMatchIn(normalize(text))) return null
 
         val category = categoryBlock?.text?.let(::sanitizeCategory)
+        val positioned = selected.filter { it.right != Int.MAX_VALUE && it.right > it.left && it.bottom > it.top }
+        val bounds = positioned.takeIf { it.isNotEmpty() }?.let { selectedBlocks ->
+            OcrBounds(
+                left = selectedBlocks.minOf(OcrBlock::left),
+                top = selectedBlocks.minOf(OcrBlock::top),
+                right = selectedBlocks.maxOf(OcrBlock::right),
+                bottom = selectedBlocks.maxOf(OcrBlock::bottom)
+            )
+        }
         return Candidate(
             text = text,
             score = score + if (category != null) CATEGORY_SCORE_BONUS else 0,
             priceBlock = price.block,
-            category = category
+            category = category,
+            bounds = bounds
         )
     }
 
@@ -410,7 +430,8 @@ class UberOfferCardTextExtractor {
         val text: String,
         val score: Int,
         val priceBlock: OcrBlock,
-        val category: String?
+        val category: String?,
+        val bounds: OcrBounds?
     )
 
     private companion object {

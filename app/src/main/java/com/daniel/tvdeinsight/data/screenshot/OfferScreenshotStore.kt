@@ -4,7 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
-import java.io.FileOutputStream
+import android.util.AtomicFile
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -17,18 +17,22 @@ import javax.inject.Singleton
 class OfferScreenshotStore @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
+    @Synchronized
     fun save(entryId: Long, bitmap: Bitmap): String? = runCatching {
         val name = fileName(entryId)
         val directory = storageDirectory().apply { mkdirs() }
         val destination = File(directory, name)
-        val temporary = File(directory, "$name.tmp")
-        FileOutputStream(temporary).use { output ->
+        val atomic = AtomicFile(destination)
+        val output = atomic.startWrite()
+        try {
             check(bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, output)) {
                 "Não foi possível comprimir a captura"
             }
+            atomic.finishWrite(output)
+        } catch (error: Throwable) {
+            atomic.failWrite(output)
+            throw error
         }
-        if (destination.exists()) destination.delete()
-        check(temporary.renameTo(destination)) { "Não foi possível guardar a captura" }
         name
     }.getOrNull()
 
@@ -38,7 +42,11 @@ class OfferScreenshotStore @Inject constructor(
         return file.takeIf(File::isFile)
     }
 
+    /** Recover a previously overwritten database link by its stable local trip id. */
+    fun fileForEntry(entryId: Long, storedName: String?): File? = fileFor(storedName) ?: fileFor(fileName(entryId))
+
     /** Remove imagens vencidas sem as publicar fora da aplicação. */
+    @Synchronized
     fun deleteOlderThan(retentionHours: Int, nowMillis: Long = System.currentTimeMillis()): Int {
         val threshold = nowMillis - retentionHours.coerceIn(24, 7 * 24).toLong() * 60L * 60L * 1_000L
         return storageDirectory().listFiles()

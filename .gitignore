@@ -27,8 +27,40 @@ build/
 
 
 .gradle-agent/
+.kotlin/
 .gradle-user-home/
 .gradle-codex-build/
 .build-logs/
 
 app/build-*/
+
+# Generated distribution artifacts
+/apks/
+*.apk
+*.aab
+
+# Local runtime data and diagnostics
+*.log
+*.db
+*.sqlite
+*.sqlite3
+*.tmp
+*.bak
+*.swp
+Thumbs.db
+
+# Credentials and signing material
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pk8
+*.p12
+*.jks
+*.keystore
+tvde-insight-sync-*.json
+*service-account*.json
+*service_account*.json
+/secrets/
+/credentials/

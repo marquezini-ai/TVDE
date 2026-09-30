@@ -20,8 +20,10 @@ import java.util.Locale
 object AppLogger {
     private const val CURRENT_FILE_NAME = "tvde-insight-current.log"
     private const val LEGACY_FILE_NAME = "tvde-insight.log"
-    private const val MAX_LOG_BYTES = 5L * 1024L * 1024L
-    private const val MAX_ARCHIVED_LOGS = 5
+    // OCR and accessibility run continuously. Keep a short diagnostic history
+    // so private information cannot accumulate on the device.
+    private const val MAX_LOG_BYTES = 1L * 1024L * 1024L
+    private const val MAX_ARCHIVED_LOGS = 3
 
     private val lock = Any()
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSSZ", Locale.US)

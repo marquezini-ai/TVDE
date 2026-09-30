@@ -15,6 +15,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -22,7 +23,10 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -37,6 +41,7 @@ import com.daniel.tvdeinsight.domain.model.OfferPlatform
 import com.daniel.tvdeinsight.domain.model.RuleResult
 import com.daniel.tvdeinsight.data.repository.ThemePreferencesRepository
 import com.daniel.tvdeinsight.logging.AppLogger
+import com.daniel.tvdeinsight.R
 import com.daniel.tvdeinsight.ui.theme.DecisionColors
 import com.daniel.tvdeinsight.ui.theme.ThemeMode
 import com.daniel.tvdeinsight.ui.theme.decisionColors
@@ -49,219 +54,513 @@ import javax.inject.Singleton
 
 private val PORTUGUESE_LOCALE = Locale("pt", "PT")
 
+private fun Rect.toOverlayBounds() = OverlayBounds(left, top, right, bottom)
+private fun OverlayBounds.toAndroidRect() = Rect(left, top, right, bottom)
+
 @Singleton
 class DecisionOverlayManager @Inject constructor(
     @ApplicationContext private val context: Context,
     themePreferencesRepository: ThemePreferencesRepository
 ) {
-    private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-    private val coroutineScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val mainHandler = Handler(Looper.getMainLooper())
-
-    private data class OverlayEntry(
-        val platform: OfferPlatform,
-        val view: ComposeView,
-        val lifecycleOwner: OverlayLifecycleOwner,
-        val viewModelStore: ViewModelStore,
-        var decision: RuleResult,
-        var anchor: Rect?,
-        var hideJob: Job? = null
+    private data class Entry(
+        val platform: OfferPlatform, val view: android.widget.FrameLayout, val compose: ComposeView,
+        val owner: OverlayLifecycleOwner, val store: ViewModelStore,
+        val manager: WindowManager, val displayContext: Context, val displayId: Int,
+        val windowType: Int,
+        var decision: RuleResult, var anchor: Rect?, var constrainToAnchor: Boolean,
+        var avoidTopPx: Int?, var hideJob: Job? = null
     )
-
-    /** Uma janela por plataforma permite Uber e Bolt permanecerem visíveis juntos. */
-    private val entries = mutableMapOf<OfferPlatform, OverlayEntry>()
-    @Volatile private var themeMode: ThemeMode = ThemeMode.AUTOMATIC
+    /** One touchable window per display; all platform cards are children of it. */
+    private data class Host(
+        val root: android.widget.FrameLayout,
+        val manager: WindowManager,
+        val context: Context,
+        val displayId: Int,
+        val windowType: Int,
+        val params: WindowManager.LayoutParams,
+        val owner: OverlayLifecycleOwner,
+        val store: ViewModelStore
+    )
+    private val entries = linkedMapOf<OfferPlatform, Entry>()
+    private val hosts = linkedMapOf<Int, Host>()
+    private val dismissed = mutableMapOf<OfferPlatform, Pair<RuleResult, Long>>()
+    private var themeMode = ThemeMode.AUTOMATIC
+    /**
+     * A context supplied by the active AccessibilityService carries Android's
+     * accessibility-overlay token.  This layer is above application-owned
+     * offer panels (including the Uber Radar sheet), unlike a generic app
+     * overlay which some OEMs can place underneath that sheet.
+     */
+    private var accessibilityOverlayContext: Context? = null
 
     init {
-        coroutineScope.launch {
-            themePreferencesRepository.themeMode.collect { themeMode = it }
+        scope.launch {
+            themePreferencesRepository.themeMode.collect {
+                themeMode = it
+                entries.values.forEach(::render)
+            }
         }
     }
 
-    /** Mostra/atualiza somente o card da plataforma que originou a leitura. */
-    fun showDecision(decision: RuleResult, anchor: Rect? = null) {
+    fun attachAccessibilityOverlayContext(serviceContext: Context) {
+        // onServiceConnected() and showDecision() normally run on the main
+        // looper. Set the context synchronously there so the first offer cannot
+        // race the post and fall back to an invalid application window token.
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            accessibilityOverlayContext = serviceContext
+        } else {
+            mainHandler.post { accessibilityOverlayContext = serviceContext }
+        }
+    }
+
+    fun detachAccessibilityOverlayContext(serviceContext: Context) {
         mainHandler.post {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context)) {
-                AppLogger.warn("Card ${decision.platform.label} não mostrado: permissão de sobreposição ausente")
-                return@post
+            if (accessibilityOverlayContext === serviceContext) {
+                accessibilityOverlayContext = null
             }
-            val platform = decision.platform
-            val existing = entries[platform]
-            if (existing != null && decision.valorPorHora <= 0.5) {
-                return@post
-            }
+        }
+    }
 
-            if (existing != null && existing.decision.isEquivalentTo(decision)) {
-                existing.anchor = anchor?.let(::Rect)
-                updateOverlayLayout(existing.view, existing.anchor)
-                return@post
+    fun showDecision(
+        decision: RuleResult,
+        anchor: Rect? = null,
+        displayId: Int = android.view.Display.DEFAULT_DISPLAY,
+        avoidTopPx: Int? = null,
+        constrainToAnchor: Boolean = false
+    ) {
+        mainHandler.post {
+            // Accessibility overlays are authorised by the running service and
+            // do not require the user to grant SYSTEM_ALERT_WINDOW. Checking
+            // canDrawOverlays() unconditionally silently dropped cards whenever
+            // the launcher/another app was in front. Only require that setting
+            // when we truly have to fall back to an application overlay.
+            if (accessibilityOverlayContext == null && !Settings.canDrawOverlays(context)) return@post
+            val priorDismissal = dismissed[decision.platform]
+            if (priorDismissal != null && priorDismissal.first == decision &&
+                android.os.SystemClock.elapsedRealtime() - priorDismissal.second < 20_000L) return@post
+            var entry = entries[decision.platform]
+            if (entry != null && entry.displayId != displayId) {
+                removeNow(decision.platform)
+                entry = null
             }
-
-            if (existing != null) {
-                existing.decision = decision
-                existing.anchor = anchor?.let(::Rect)
-                updateOverlayLayout(existing.view, existing.anchor)
-                existing.view.setContent {
-                    DecisionCardOverlay(
-                        decision = decision,
-                        darkTheme = isDarkTheme(),
-                        onClick = { removeOverlay(platform) }
-                    )
+            if (entry == null) {
+                val display = context.getSystemService(android.hardware.display.DisplayManager::class.java).getDisplay(displayId)
+                    ?: return@post
+                val accessibilityContext = accessibilityOverlayContext
+                val useAccessibilityOverlay = accessibilityContext != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+                val windowType = if (useAccessibilityOverlay) {
+                    WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+                } else {
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                 }
-            } else {
-                val lifecycleOwner = OverlayLifecycleOwner()
-                lifecycleOwner.performRestore(null)
-                lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
-                val viewModelStore = ViewModelStore()
-                val view = ComposeView(context).apply {
-                    setContent {
-                        DecisionCardOverlay(
-                            decision = decision,
-                            darkTheme = isDarkTheme(),
-                            onClick = { removeOverlay(platform) }
-                        )
-                    }
-                    // Até Android 12L, trata o toque diretamente no overlay.
-                    // Assim o card fecha mesmo se a Uber não for a janela ativa.
-                    // Android 13+ conserva a interação Compose atual.
-                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-                        setOnTouchListener { touchedView, touchEvent ->
-                            if (touchEvent.action == MotionEvent.ACTION_UP) {
-                                touchedView.performClick()
-                                removeOverlay(platform)
+                // TYPE_ACCESSIBILITY_OVERLAY must use the WindowManager obtained
+                // from the AccessibilityService context itself. Creating a
+                // TYPE_ACCESSIBILITY_OVERLAY WindowContext on Android 12/Samsung
+                // can lose the service token and throw BadTokenException on the
+                // first card. Generic application overlays still use a proper
+                // WindowContext as required by Android 11+.
+                val displayContext = if (useAccessibilityOverlay && displayId == android.view.Display.DEFAULT_DISPLAY) {
+                    accessibilityContext!!
+                } else {
+                    (accessibilityContext ?: context).createDisplayContext(display)
+                }
+                val windowContext = if (useAccessibilityOverlay) {
+                    displayContext
+                } else if (Build.VERSION.SDK_INT >= 30) {
+                    displayContext.createWindowContext(windowType, null)
+                } else {
+                    displayContext
+                }
+                val manager = windowContext.getSystemService(WindowManager::class.java)
+                val owner = OverlayLifecycleOwner().apply {
+                    performRestore(null)
+                    handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+                }
+                val store = ViewModelStore()
+                // Intercept at dispatch level on ALL Android versions, including Compose descendants.
+                val view = object : android.widget.FrameLayout(windowContext) {
+                    private var downX = 0f
+                    private var downY = 0f
+                    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+                        when (event.actionMasked) {
+                            MotionEvent.ACTION_DOWN -> { downX = event.rawX; downY = event.rawY }
+                            MotionEvent.ACTION_UP -> {
+                                val slop = android.view.ViewConfiguration.get(windowContext).scaledTouchSlop
+                                if (kotlin.math.abs(event.rawX - downX) <= slop && kotlin.math.abs(event.rawY - downY) <= slop) {
+                                    performClick()
+                                    dismiss(decision.platform)
+                                }
                             }
-                            true
+                        }
+                        return true
+                    }
+                }
+                view.setViewTreeLifecycleOwner(owner)
+                view.setViewTreeSavedStateRegistryOwner(owner)
+                view.setViewTreeViewModelStoreOwner(object : ViewModelStoreOwner { override val viewModelStore = store })
+                val compose = ComposeView(windowContext)
+                view.addView(compose, android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT, android.widget.FrameLayout.LayoutParams.WRAP_CONTENT))
+                val created = Entry(decision.platform, view, compose, owner, store, manager, windowContext,
+                    displayId, windowType, decision, anchor?.let(::Rect), constrainToAnchor, avoidTopPx)
+                render(created)
+                try {
+                    // Keep exactly one accessibility-overlay window per display.
+                    // Independent windows race in z-order and can nest one card over
+                    // another when Uber and Bolt offers arrive together.
+                    val host = hosts[displayId] ?: createHost(windowContext, displayId, windowType, manager)
+                    host.root.addView(view, android.widget.FrameLayout.LayoutParams(
+                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                        android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+                    ))
+                    owner.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+                    entries[decision.platform] = created
+                    view.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> relayout() }
+                    compose.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> relayout() }
+                    relayoutAfterAttach(view)
+                    entry = created
+                    mainHandler.post(::relayout)
+                } catch (error: Exception) {
+                    hosts[displayId]?.let { host ->
+                        if (host.root.childCount == 0) {
+                            runCatching { host.manager.removeViewImmediate(host.root) }
+                            host.owner.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+                            host.store.clear()
+                            hosts.remove(displayId)
                         }
                     }
+                    compose.disposeComposition()
+                    owner.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+                    store.clear()
+                    AppLogger.warn("Não foi possível apresentar o card", error)
+                    return@post
                 }
-
-                val params = WindowManager.LayoutParams(
-                    overlayWidth(anchor),
-                    WindowManager.LayoutParams.WRAP_CONTENT,
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-                    PixelFormat.TRANSLUCENT
-                ).apply {
-                    if (anchor == null) {
-                        gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                        y = 140.dpToPx(context)
-                    } else {
-                        gravity = Gravity.TOP or Gravity.START
-                        x = overlayX(anchor, overlayWidth(anchor))
-                        y = overlayY(anchor)
-                    }
-                }
-
-                val viewModelStoreOwner = object : ViewModelStoreOwner {
-                    override val viewModelStore = viewModelStore
-                }
-
-                view.setViewTreeLifecycleOwner(lifecycleOwner)
-                view.setViewTreeSavedStateRegistryOwner(lifecycleOwner)
-                view.setViewTreeViewModelStoreOwner(viewModelStoreOwner)
-
-                try {
-                    windowManager.addView(view, params)
-                    lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
-                    entries[platform] = OverlayEntry(
-                        platform = platform,
-                        view = view,
-                        lifecycleOwner = lifecycleOwner,
-                        viewModelStore = viewModelStore,
-                        decision = decision,
-                        anchor = anchor?.let(::Rect)
-                    )
-                } catch (e: Exception) {
-                    view.disposeComposition()
-                    lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
-                    viewModelStore.clear()
-                    AppLogger.warn("Não foi possível mostrar o overlay de decisão", e)
-                }
+            } else {
+                entry.decision = decision
+                entry.anchor = anchor?.let(::Rect)
+                entry.constrainToAnchor = constrainToAnchor
+                entry.avoidTopPx = avoidTopPx
+                render(entry)
             }
+            val current = entry ?: return@post
+            current.hideJob?.cancel()
+            current.hideJob = scope.launch { delay(10_000L); removeNow(decision.platform); relayout() }
+            relayout()
+        }
+    }
 
-            entries[platform]?.hideJob?.cancel()
-            entries[platform]?.hideJob = coroutineScope.launch {
-                delay(10000L)
-                removeOverlay(platform)
+    private fun createHost(
+        displayContext: Context,
+        displayId: Int,
+        windowType: Int,
+        manager: WindowManager
+    ): Host {
+        // Compose resolves the window recomposer from the root view tree when
+        // the host is attached. The old per-card owner was attached below the
+        // window root, which is not visible to Android 16's lookup and crashed
+        // the accessibility service on the first rendered card.
+        val owner = OverlayLifecycleOwner().apply {
+            performRestore(null)
+            handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+        }
+        val store = ViewModelStore()
+        val root = android.widget.FrameLayout(displayContext).apply {
+            clipChildren = true
+            clipToPadding = true
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            setViewTreeLifecycleOwner(owner)
+            setViewTreeSavedStateRegistryOwner(owner)
+            setViewTreeViewModelStoreOwner(object : ViewModelStoreOwner {
+                override val viewModelStore = store
+            })
+        }
+        val params = WindowManager.LayoutParams(
+            1,
+            1,
+            windowType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.LEFT
+            if (Build.VERSION.SDK_INT >= 30) setFitInsetsTypes(0)
+        }
+        try {
+            manager.addView(root, params)
+        } catch (error: Exception) {
+            owner.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+            store.clear()
+            throw error
+        }
+        owner.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        return Host(root, manager, displayContext, displayId, windowType, params, owner, store).also {
+            hosts[displayId] = it
+        }
+    }
+
+    fun updateAnchor(
+        platform: OfferPlatform,
+        anchor: Rect,
+        displayId: Int,
+        constrainToAnchor: Boolean = false
+    ) {
+        mainHandler.post {
+            val entry = entries[platform] ?: return@post
+            if (entry.displayId != displayId) {
+                showDecision(entry.decision, anchor, displayId, entry.avoidTopPx, constrainToAnchor)
+            } else {
+                entry.anchor = Rect(anchor)
+                entry.constrainToAnchor = constrainToAnchor
+                relayout()
             }
         }
     }
 
-    /** Remove apenas uma plataforma; sem argumento limpa todos os cards. */
+    private fun render(entry: Entry) {
+        val dark = when (themeMode) {
+            ThemeMode.LIGHT -> false
+            ThemeMode.DARK -> true
+            ThemeMode.AUTOMATIC -> entry.displayContext.resources.configuration.uiMode and
+                Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+        }
+        entry.compose.setContent { DecisionCardOverlay(entry.decision, dark) { dismiss(entry.platform) } }
+    }
+
+    /**
+     * WindowManager.addView() may return before Android dispatches attachment
+     * to the accessibility-overlay root. Compose cannot be measured until that
+     * happens because its WindowRecomposer does not exist yet.
+     */
+    private fun relayoutAfterAttach(view: android.view.View) {
+        if (view.isAttachedToWindow) {
+            view.post(::relayout)
+            return
+        }
+        view.addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(attachedView: android.view.View) {
+                attachedView.removeOnAttachStateChangeListener(this)
+                attachedView.post(::relayout)
+            }
+
+            override fun onViewDetachedFromWindow(detachedView: android.view.View) = Unit
+        })
+    }
+
+    private fun dismiss(platform: OfferPlatform) {
+        entries[platform]?.let { dismissed[platform] = it.decision to android.os.SystemClock.elapsedRealtime() }
+        removeNow(platform)
+        relayout()
+    }
+
+    private fun area(entry: Entry): Rect {
+        /*
+         * currentWindowMetrics is deliberately not used here. For an
+         * accessibility overlay it can describe the overlay host itself after
+         * updateViewLayout(), so every relayout feeds the previous card
+         * position back into the next calculation and walks the cards down the
+         * screen. maximumWindowMetrics is stable and represents the physical
+         * display; split-screen/DeX is applied explicitly through the app pane
+         * anchor below.
+         */
+        val displayBounds: Rect
+        val safe: android.graphics.Insets?
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val metrics = entry.manager.maximumWindowMetrics
+            displayBounds = Rect(metrics.bounds)
+            safe = metrics.windowInsets.getInsetsIgnoringVisibility(
+                android.view.WindowInsets.Type.systemBars() or
+                    android.view.WindowInsets.Type.displayCutout()
+            )
+        } else {
+            val display = context.getSystemService(android.hardware.display.DisplayManager::class.java)
+                .getDisplay(entry.displayId)
+            val size = android.graphics.Point()
+            @Suppress("DEPRECATION")
+            display?.getRealSize(size)
+            displayBounds = Rect(
+                0,
+                0,
+                size.x.takeIf { it > 0 } ?: entry.displayContext.resources.displayMetrics.widthPixels,
+                size.y.takeIf { it > 0 } ?: entry.displayContext.resources.displayMetrics.heightPixels
+            )
+            safe = null
+        }
+        val resolved = OverlayPlacementPolicy.resolve(
+            display = displayBounds.toOverlayBounds(),
+            insets = OverlayInsets(
+                left = safe?.left ?: 0,
+                top = safe?.top ?: 0,
+                right = safe?.right ?: 0,
+                bottom = safe?.bottom ?: 0
+            ),
+            anchor = entry.anchor?.toOverlayBounds(),
+            constrainToAnchor = entry.constrainToAnchor,
+            avoidTopBottom = entry.avoidTopPx,
+            controlGapPx = (8 * entry.displayContext.resources.displayMetrics.density).toInt(),
+            // 18 dp becomes 47 px on the S25 (420 dpi), exactly matching the
+            // horizontal limits of the requested green safe area.
+            normalPhoneHorizontalInsetPx = (18 * entry.displayContext.resources.displayMetrics.density).toInt()
+        )
+        return resolved.toAndroidRect()
+    }
+
+    /**
+     * Layout every card inside its display host.  The host is resized to the
+     * measured stack, so no card can overlap another because a separate window
+     * reported a temporary zero height during Compose's first frame.
+     */
+    private fun relayout() {
+        try {
+            relayoutAttachedHosts()
+        } catch (error: Exception) {
+            // A presentation failure must never terminate the 24/7
+            // AccessibilityService and consequently stop every Uber/Bolt read.
+            AppLogger.warn("Falha isolada ao calcular posição dos cards", error)
+        }
+    }
+
+    private fun relayoutAttachedHosts() {
+        entries.values.groupBy { it.displayId }.forEach { (displayId, grouped) ->
+            val host = hosts[displayId] ?: return@forEach
+            val gap = (6 * grouped.first().displayContext.resources.displayMetrics.density).toInt()
+            val candidates = grouped.map { entry ->
+                val available = area(entry)
+                // Never call measure() here. On Android 16 the accessibility
+                // overlay is attached asynchronously; forcing Compose to
+                // measure before attachment throws "Cannot locate
+                // windowRecomposer" and terminates the accessibility service.
+                // The first frame uses the bounded fallback and the normal
+                // layout callback replaces it with the actual measured height.
+                LayoutCandidate(
+                    entry = entry,
+                    area = available,
+                    height = entry.view.measuredHeight
+                        .takeIf { entry.view.isAttachedToWindow && it > 0 }
+                        ?: estimatedHeight(entry)
+                )
+            }
+            if (candidates.isEmpty()) return@forEach
+
+            // Cards whose real app areas overlap belong to the same lane and
+            // are stacked. Disjoint split-screen/DeX panes each start at their
+            // own top edge instead of being pushed below the other app.
+            val remaining = candidates.toMutableList()
+            val placements = mutableListOf<CardPlacement>()
+            while (remaining.isNotEmpty()) {
+                val lane = mutableListOf(remaining.removeAt(0))
+                var expanded: Boolean
+                do {
+                    expanded = false
+                    val iterator = remaining.iterator()
+                    while (iterator.hasNext()) {
+                        val candidate = iterator.next()
+                        if (lane.any { Rect.intersects(it.area, candidate.area) }) {
+                            lane += candidate
+                            iterator.remove()
+                            expanded = true
+                        }
+                    }
+                } while (expanded)
+
+                var laneCursor = lane.maxOf { it.area.top }
+                lane.forEach { candidate ->
+                    val bottom = (laneCursor + candidate.height)
+                        .coerceAtMost(candidate.area.bottom)
+                        .coerceAtLeast(laneCursor + 1)
+                    placements += CardPlacement(
+                        candidate = candidate,
+                        bounds = Rect(candidate.area.left, laneCursor, candidate.area.right, bottom)
+                    )
+                    laneCursor = bottom + gap
+                }
+            }
+
+            val hostLeft = placements.minOf { it.bounds.left }
+            val hostTop = placements.minOf { it.bounds.top }
+            val hostRight = placements.maxOf { it.bounds.right }
+            val hostBottom = placements.maxOf { it.bounds.bottom }
+            placements.forEach { placement ->
+                val entry = placement.candidate.entry
+                val childParams = (entry.view.layoutParams as? android.widget.FrameLayout.LayoutParams)
+                    ?: android.widget.FrameLayout.LayoutParams(
+                        android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                        android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+                    )
+                val childWidth = placement.bounds.width().coerceAtLeast(1)
+                val childLeft = placement.bounds.left - hostLeft
+                val childTop = placement.bounds.top - hostTop
+                if (
+                    childParams.width != childWidth ||
+                    childParams.height != android.widget.FrameLayout.LayoutParams.WRAP_CONTENT ||
+                    childParams.leftMargin != childLeft ||
+                    childParams.topMargin != childTop
+                ) {
+                    childParams.width = childWidth
+                    // WRAP_CONTENT is essential: an exact fallback height would
+                    // become self-fulfilling and Android could never report the
+                    // card's real Compose height on the following layout pass.
+                    childParams.height = android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+                    childParams.leftMargin = childLeft
+                    childParams.topMargin = childTop
+                    entry.view.layoutParams = childParams
+                }
+            }
+            val hostWidth = (hostRight - hostLeft).coerceAtLeast(1)
+            val hostHeight = (hostBottom - hostTop).coerceAtLeast(1)
+            val params = host.params
+            if (params.x != hostLeft || params.y != hostTop ||
+                params.width != hostWidth || params.height != hostHeight) {
+                params.x = hostLeft
+                params.y = hostTop
+                params.width = hostWidth
+                params.height = hostHeight
+                runCatching { host.manager.updateViewLayout(host.root, params) }
+                    .onFailure { AppLogger.warn("Falha ao reposicionar host dos cards", it) }
+                    .onSuccess {
+                        AppLogger.debug(
+                            "Cards posicionados: display=$displayId, x=$hostLeft, y=$hostTop, " +
+                                "largura=$hostWidth, altura=$hostHeight, quantidade=${placements.size}"
+                        )
+                    }
+            }
+        }
+    }
+
+    private data class LayoutCandidate(val entry: Entry, val area: Rect, val height: Int)
+    private data class CardPlacement(val candidate: LayoutCandidate, val bounds: Rect)
+
+    /** Small fallback only; the attached Compose view is normally measured above. */
+    private fun estimatedHeight(entry: Entry): Int {
+        val density = entry.displayContext.resources.displayMetrics.density
+        return ((if (entry.decision.netTripValue != null) 150 else 180) * density).toInt()
+    }
+
     fun removeOverlay(platform: OfferPlatform? = null) {
         mainHandler.post {
-            val toRemove = if (platform == null) entries.keys.toList() else listOf(platform)
-            toRemove.forEach { key ->
-                val entry = entries.remove(key) ?: return@forEach
-                entry.hideJob?.cancel()
-                try {
-                    windowManager.removeView(entry.view)
-                } catch (e: Exception) {
-                    AppLogger.warn("Não foi possível remover o overlay de decisão", e)
-                }
-                entry.view.disposeComposition()
-                entry.lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
-                entry.viewModelStore.clear()
-            }
+            (platform?.let(::listOf) ?: entries.keys.toList()).forEach(::removeNow)
+            relayout()
         }
     }
 
-    private fun RuleResult.isEquivalentTo(other: RuleResult): Boolean =
-        valorPorKm == other.valorPorKm &&
-            valorPorHora == other.valorPorHora &&
-            netTripValue == other.netTripValue &&
-            type == other.type &&
-            platform == other.platform &&
-            pickupDistanceKm == other.pickupDistanceKm &&
-            activeCriteria == other.activeCriteria &&
-            criterionDecisions == other.criterionDecisions
-
-    private fun Int.dpToPx(context: Context): Int {
-        return (this * context.resources.displayMetrics.density).toInt()
-    }
-
-    private fun overlayWidth(anchor: Rect?): Int {
-        if (anchor == null) return WindowManager.LayoutParams.MATCH_PARENT
-        val displayWidth = context.resources.displayMetrics.widthPixels
-        val minimum = 300.dpToPx(context).coerceAtMost(displayWidth)
-        return anchor.width().coerceAtLeast(minimum).coerceAtMost(displayWidth)
-    }
-
-    private fun overlayX(anchor: Rect, width: Int): Int {
-        val displayWidth = context.resources.displayMetrics.widthPixels
-        return anchor.left.coerceIn(0, (displayWidth - width).coerceAtLeast(0))
-    }
-
-    private fun overlayY(anchor: Rect): Int =
-        (anchor.top + 8.dpToPx(context)).coerceAtLeast(8.dpToPx(context))
-
-    private fun updateOverlayLayout(view: ComposeView, anchor: Rect?) {
-        val params = view.layoutParams as? WindowManager.LayoutParams ?: return
-        if (anchor == null) {
-            params.width = WindowManager.LayoutParams.MATCH_PARENT
-            params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            params.x = 0
-            params.y = 140.dpToPx(context)
-        } else {
-            params.width = overlayWidth(anchor)
-            params.gravity = Gravity.TOP or Gravity.START
-            params.x = overlayX(anchor, params.width)
-            params.y = overlayY(anchor)
-        }
-        runCatching { windowManager.updateViewLayout(view, params) }
-            .onFailure { AppLogger.debug("Não foi possível reposicionar o overlay: ${it.message}") }
-    }
-
-    private fun isDarkTheme(): Boolean = when (themeMode) {
-        ThemeMode.LIGHT -> false
-        ThemeMode.DARK -> true
-        ThemeMode.AUTOMATIC -> {
-            context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
-                Configuration.UI_MODE_NIGHT_YES
+    private fun removeNow(platform: OfferPlatform) {
+        val entry = entries.remove(platform) ?: return
+        entry.hideJob?.cancel()
+        val host = hosts[entry.displayId]
+        runCatching { host?.root?.removeView(entry.view) }
+        entry.compose.disposeComposition()
+        entry.owner.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+        entry.store.clear()
+        if (host != null && host.root.childCount == 0) {
+            runCatching { host.manager.removeViewImmediate(host.root) }
+            host.owner.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+            host.store.clear()
+            hosts.remove(entry.displayId)
         }
     }
 }
-
 class OverlayLifecycleOwner : LifecycleOwner, SavedStateRegistryOwner {
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val savedStateRegistryController = SavedStateRegistryController.create(this)
@@ -298,7 +597,6 @@ fun DecisionCardOverlay(decision: RuleResult, darkTheme: Boolean, onClick: () ->
     }
     val colors = decisionColors(cardDecisionType, darkTheme)
 
-    val plataformaRotulo = decision.platform.label
     val criteriosAtivos = listOf(
         EvaluationCriterion.KM,
         EvaluationCriterion.HORA,
@@ -315,9 +613,7 @@ fun DecisionCardOverlay(decision: RuleResult, darkTheme: Boolean, onClick: () ->
             EvaluationCriterion.RECOLHA -> "Recolha"
         }
     }
-    val informacaoRodape = listOf(plataformaRotulo, criteriosRotulo)
-        .filter(String::isNotBlank)
-        .joinToString(" | ")
+    val informacaoRodape = criteriosRotulo
     val usesCompactMetrics = decision.netTripValue != null
 
     Box(
@@ -339,19 +635,28 @@ fun DecisionCardOverlay(decision: RuleResult, darkTheme: Boolean, onClick: () ->
                 ),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Box(
-                    modifier = Modifier.background(colors.badge, RoundedCornerShape(50)).padding(
-                        horizontal = if (usesCompactMetrics) 11.dp else 14.dp,
-                        vertical = 3.dp
-                    )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(if (usesCompactMetrics) 5.dp else 7.dp)
                 ) {
-                    Text(
-                        text = titleText,
-                        color = colors.badgeContent,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = if (usesCompactMetrics) 11.sp else 12.sp,
-                        letterSpacing = 0.5.sp
+                    PlatformLogo(
+                        platform = decision.platform,
+                        compact = usesCompactMetrics
                     )
+                    Box(
+                        modifier = Modifier.background(colors.badge, RoundedCornerShape(50)).padding(
+                            horizontal = if (usesCompactMetrics) 11.dp else 14.dp,
+                            vertical = 3.dp
+                        )
+                    ) {
+                        Text(
+                            text = titleText,
+                            color = colors.badgeContent,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = if (usesCompactMetrics) 11.sp else 12.sp,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(if (usesCompactMetrics) 6.dp else 14.dp))
@@ -414,6 +719,23 @@ fun DecisionCardOverlay(decision: RuleResult, darkTheme: Boolean, onClick: () ->
             }
         }
     }
+}
+
+@Composable
+private fun PlatformLogo(platform: OfferPlatform, compact: Boolean) {
+    val logo = when (platform) {
+        OfferPlatform.UBER -> R.drawable.logo_uber
+        OfferPlatform.BOLT -> R.drawable.logo_bolt
+        OfferPlatform.UNKNOWN -> null
+    } ?: return
+    androidx.compose.foundation.Image(
+        painter = painterResource(logo),
+        contentDescription = platform.label,
+        contentScale = ContentScale.Crop,
+        modifier = Modifier
+            .size(if (compact) 24.dp else 30.dp)
+            .clip(CircleShape)
+    )
 }
 
 @Composable

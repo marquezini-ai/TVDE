@@ -49,11 +49,27 @@ fun TvdeInsightApp(viewModel: MainViewModel = hiltViewModel()) {
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle(
         initialValue = com.daniel.tvdeinsight.ui.theme.ThemeMode.AUTOMATIC
     )
+    val hasInternet by viewModel.hasValidatedInternet.collectAsStateWithLifecycle()
     var selectedScreen by rememberSaveable { mutableStateOf(Screen.HOME) }
     var historyReturnToListToken by rememberSaveable { mutableIntStateOf(0) }
 
     TVDEInsightTheme(themeMode = themeMode) {
         Scaffold(
+            topBar = {
+                if (!hasInternet) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.errorContainer
+                    ) {
+                        Text(
+                            text = "Sem ligação à Internet. Sincronização online à espera da rede.",
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            },
             bottomBar = {
                 Surface(
                     modifier = Modifier

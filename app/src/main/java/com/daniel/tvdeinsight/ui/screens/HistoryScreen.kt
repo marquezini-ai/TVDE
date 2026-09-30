@@ -265,8 +265,8 @@ private fun HistoryDetailScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val screenshotFile = remember(entry.screenshotFileName) {
-        screenshotStore.fileFor(entry.screenshotFileName)
+    val screenshotFile = remember(entry.id, entry.screenshotFileName) {
+        screenshotStore.fileForEntry(entry.id, entry.screenshotFileName)
     }
     var screenshotOpen by rememberSaveable(entry.id, entry.screenshotFileName) { mutableStateOf(false) }
     if (screenshotOpen && screenshotFile != null) {
@@ -430,8 +430,12 @@ private fun OfferScreenshotScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val image = remember(screenshotFile.absolutePath, screenshotFile.lastModified()) {
-        BitmapFactory.decodeFile(screenshotFile.absolutePath)?.asImageBitmap()
+    val bitmap = remember(screenshotFile.absolutePath, screenshotFile.lastModified()) {
+        BitmapFactory.decodeFile(screenshotFile.absolutePath)
+    }
+    val image = remember(bitmap) { bitmap?.asImageBitmap() }
+    androidx.compose.runtime.DisposableEffect(bitmap) {
+        onDispose { bitmap?.recycle() }
     }
     val downloadLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("image/jpeg")

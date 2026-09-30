@@ -20,6 +20,7 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
@@ -46,6 +47,7 @@ import androidx.lifecycle.LifecycleService
 import com.example.cameraseguranca.CameraSafetyDependencies
 import com.example.cameraseguranca.PanicRecordingActivity
 import com.daniel.tvdeinsight.R
+import com.daniel.tvdeinsight.logging.AppLogger
 import com.example.cameraseguranca.data.CameraLens
 import com.example.cameraseguranca.data.RecordingSettings
 import com.example.cameraseguranca.data.RecordingStorage
@@ -70,9 +72,19 @@ import kotlin.math.sin
  * indicador de câmera do sistema: ambos continuam obrigatórios e intencionais.
  */
 class RecordingService : LifecycleService() {
-    private val handler = Handler(Looper.getMainLooper())
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val cameraExecutor by lazy { ContextCompat.getMainExecutor(this) }
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    /**
+     * OverlayEffect processa texturas numa thread que o chamador fornece. Em
+     * alguns Samsung/Android 16, SurfaceTexture.updateTexImage lança uma
+     * IllegalStateException dentro do processador CameraX. Nunca deve derrubar
+     * o processo que mantém a câmara: esta thread contém a exceção e aciona o
+     * fallback de captura direta na main thread.
+     */
+    private lateinit var watermarkThread: HandlerThread
+    private lateinit var watermarkHandler: Handler
 
     private var cameraProvider: ProcessCameraProvider? = null
     private var videoCapture: VideoCapture<Recorder>? = null
@@ -115,9 +127,12 @@ class RecordingService : LifecycleService() {
     private var currentRecordingToken = 0L
     private var shouldRotateSegment = false
     private var currentChunkFile: java.io.File? = null
+    private var currentChunkStartedAt = 0L
     private val sessionChunks = ArrayDeque<java.io.File>()
     private var stopRequested = false
     private var finalizationInProgress = false
+    private var watermarkPipelineEnabled = true
+    private var watermarkRecoveryScheduled = false
 
     private val overlayControlReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -130,6 +145,14 @@ class RecordingService : LifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
+        watermarkThread = HandlerThread("TvdeWatermarkEffect").apply {
+            uncaughtExceptionHandler = Thread.UncaughtExceptionHandler { _, error ->
+                AppLogger.error("Falha nativa no pipeline de marca-d’água; a recuperar vídeo sem efeito.", error)
+                mainHandler.post { recoverFromWatermarkPipelineFailure(error) }
+            }
+            start()
+        }
+        watermarkHandler = Handler(watermarkThread.looper)
         createNotificationChannel()
         publishRecordingState(active = false)
         ContextCompat.registerReceiver(
@@ -166,6 +189,9 @@ class RecordingService : LifecycleService() {
         }
 
         sessionStarting = true
+        watermarkPipelineEnabled = true
+        watermarkRecoveryScheduled = false
+        AppLogger.info("Gravação: início solicitado")
         serviceScope.launch {
             runCatching {
                 CameraSafetyDependencies.settingsRepository(applicationContext).settings.first()
@@ -193,6 +219,11 @@ class RecordingService : LifecycleService() {
         finalizationInProgress = false
         sessionChunks.clear()
         currentChunkFile = null
+        currentChunkStartedAt = 0L
+        val stalePartials = RecordingStorage.deleteOrphanedPartialFiles(this)
+        if (stalePartials > 0) {
+            AppLogger.info("Gravação: limpeza de ficheiro(s) parcial(is) abandonado(s): $stalePartials")
+        }
         publishRecordingState(active = true, paused = false)
         segmentIndex = 0
         // A gravação circular não termina sozinha. O valor escolhido em
@@ -200,6 +231,12 @@ class RecordingService : LifecycleService() {
         // Podar logo no arranque também limpa excedentes deixados por uma
         // sessão anterior, antes de criar o primeiro segmento novo.
         pruneCircularBufferAsync()
+
+        bindCamera(settings)
+    }
+
+    /** Liga a câmara sem reinicializar o buffer circular já existente. */
+    private fun bindCamera(settings: RecordingSettings) {
 
         val future = ProcessCameraProvider.getInstance(applicationContext)
         future.addListener({
@@ -239,12 +276,21 @@ class RecordingService : LifecycleService() {
 
                 cameraProvider = provider
                 videoCapture = capture
-                watermarkEffect = createWatermarkEffect()
-                val useCaseGroup = UseCaseGroup.Builder()
-                    .addUseCase(capture)
-                    .addEffect(requireNotNull(watermarkEffect))
-                    .build()
-                provider.bindToLifecycle(this, selector, useCaseGroup)
+                if (watermarkPipelineEnabled) {
+                    watermarkEffect = createWatermarkEffect()
+                    val useCaseGroup = UseCaseGroup.Builder()
+                        .addUseCase(capture)
+                        .addEffect(requireNotNull(watermarkEffect))
+                        .build()
+                    provider.bindToLifecycle(this, selector, useCaseGroup)
+                    AppLogger.info(
+                        "Gravação: câmara ligada com marca-d’água; " +
+                            "lente=${settings.lens.label}, qualidade=${settings.quality.label}, fps=${settings.fps.value}"
+                    )
+                } else {
+                    provider.bindToLifecycle(this, selector, capture)
+                    AppLogger.warn("Gravação: câmara ligada em modo de recuperação, sem marca-d’água")
+                }
                 startLocationUpdates()
                 startNextSegment()
             } catch (error: Exception) {
@@ -257,15 +303,18 @@ class RecordingService : LifecycleService() {
         return OverlayEffect(
             CameraEffect.VIDEO_CAPTURE,
             0,
-            handler,
-            { error -> Log.e(TAG, "Falha ao renderizar a marca d’água.", error) }
+            watermarkHandler,
+            { error ->
+                AppLogger.error("Falha reportada pelo efeito de marca-d’água.", error)
+                mainHandler.post { recoverFromWatermarkPipelineFailure(error) }
+            }
         ).also { effect ->
             effect.setOnDrawListener { frame ->
                 runCatching {
                     drawWatermark(frame)
                     true
                 }.getOrElse { error ->
-                    Log.e(TAG, "Falha ao desenhar a marca d’água.", error)
+                    AppLogger.warn("Falha ao desenhar a marca-d’água do vídeo.", error)
                     false
                 }
             }
@@ -471,6 +520,7 @@ class RecordingService : LifecycleService() {
             return
         }
         currentChunkFile = outputFile
+        currentChunkStartedAt = SystemClock.elapsedRealtime()
         val outputBuilder = FileOutputOptions.Builder(outputFile)
         outputBuilder.setDurationLimitMillis(durationForFile)
 
@@ -507,8 +557,11 @@ class RecordingService : LifecycleService() {
     private fun onRecordingFinalized(event: VideoRecordEvent.Finalize) {
         recording = null
         sessionPaused = false
-        currentChunkFile?.takeIf { it.isFile && it.length() > 0L }?.let(::registerChunk)
+        val finishedChunk = currentChunkFile?.takeIf { it.isFile && it.length() > 0L }
+        val elapsedMs = (SystemClock.elapsedRealtime() - currentChunkStartedAt).coerceAtLeast(0L)
+        finishedChunk?.let(::registerChunk)
         currentChunkFile = null
+        currentChunkStartedAt = 0L
         val rotate = shouldRotateSegment
         shouldRotateSegment = false
         val durationLimitReached = event.error == VideoRecordEvent.Finalize.ERROR_DURATION_LIMIT_REACHED
@@ -521,9 +574,12 @@ class RecordingService : LifecycleService() {
         }
 
         if (event.hasError() && !durationLimitReached) {
-            Log.e(TAG, "Finalização da gravação com erro=${event.error}", event.cause)
+            AppLogger.error("Gravação: finalização com erro=${event.error}", event.cause)
         } else {
-            Log.i(TAG, "Vídeo salvo em ${event.outputResults.outputUri}")
+            AppLogger.info(
+                "Gravação: segmento finalizado; duração=${elapsedMs}ms, " +
+                    "bytes=${finishedChunk?.length() ?: 0L}, índice=${segmentIndex - 1}"
+            )
         }
         if (stopRequested && !event.hasError()) {
             finalizeSessionAsync()
@@ -552,6 +608,7 @@ class RecordingService : LifecycleService() {
         sessionPaused = false
         publishRecordingState(active = false, paused = false)
         shouldRotateSegment = false
+        AppLogger.info("Gravação: parar solicitado; a montar a janela circular final")
         // stop() finaliza corretamente o MP4 antes de liberar a câmera.
         recording?.stop() ?: finalizeSessionAsync()
     }
@@ -567,6 +624,7 @@ class RecordingService : LifecycleService() {
         }
     }
 
+    @android.annotation.SuppressLint("UnsafeOptInUsageError")
     private fun finalizeSessionAsync() {
         if (finalizationInProgress) return
         val settings = activeSettings ?: return closeSession()
@@ -574,6 +632,7 @@ class RecordingService : LifecycleService() {
         if (chunks.isEmpty()) return closeSession()
 
         finalizationInProgress = true
+        val finalizationStartedAt = SystemClock.elapsedRealtime()
         serviceScope.launch {
             runCatching {
                 val finalFile = RecordingStorage.newFinalOutputFile(
@@ -590,9 +649,12 @@ class RecordingService : LifecycleService() {
                 chunks.forEach { chunk ->
                     if (chunk.absolutePath != finalFile.absolutePath) chunk.delete()
                 }
-                Log.i(TAG, "Gravação circular finalizada em ${finalFile.absolutePath}")
+                AppLogger.info(
+                    "Gravação: janela circular finalizada; duração=" +
+                        "${SystemClock.elapsedRealtime() - finalizationStartedAt}ms, bytes=${finalFile.length()}"
+                )
             }.onFailure { error ->
-                Log.e(TAG, "Não foi possível montar a gravação final.", error)
+                AppLogger.error("Gravação: não foi possível montar a janela circular final.", error)
             }
             finalizationInProgress = false
             closeSession()
@@ -612,11 +674,11 @@ class RecordingService : LifecycleService() {
                     maxSegments = maxSegments
                 )
             }.getOrElse { error ->
-                Log.w(TAG, "Não foi possível podar a janela circular.", error)
+                AppLogger.warn("Gravação: não foi possível podar a janela circular.", error)
                 0
             }
             if (removed > 0) {
-                Log.i(TAG, "Looping: $removed segmento(s) temporário(s) antigo(s) removido(s)")
+                AppLogger.info("Gravação: looping removeu $removed segmento(s) temporário(s) antigo(s)")
             }
         }
     }
@@ -678,7 +740,43 @@ class RecordingService : LifecycleService() {
 
     private fun fail(message: String, error: Throwable? = null) {
         Log.e(TAG, message, error)
+        AppLogger.error("Gravação: $message", error)
         closeSession()
+    }
+
+    /**
+     * Conserva a sessão e os segmentos já válidos, mas retira imediatamente o
+     * OverlayEffect que falhou. A captura volta a iniciar em vídeo puro, em vez
+     * de deixar a câmara congelada ou encerrar o processo inteiro.
+     */
+    private fun recoverFromWatermarkPipelineFailure(error: Throwable) {
+        if (watermarkRecoveryScheduled || sessionClosing || !sessionActive) return
+        val settings = activeSettings ?: return
+        watermarkRecoveryScheduled = true
+        watermarkPipelineEnabled = false
+        AppLogger.error("Gravação: a recuperar da falha de textura da marca-d’água.", error)
+
+        ++currentRecordingToken // ignora o callback Finalize do segmento interrompido
+        shouldRotateSegment = false
+        recording?.stop()
+        recording = null
+        currentChunkFile?.let { partial ->
+            if (partial.isFile) runCatching { partial.delete() }
+        }
+        currentChunkFile = null
+        currentChunkStartedAt = 0L
+        runCatching { cameraProvider?.unbindAll() }
+        runCatching { watermarkEffect?.close() }
+        videoCapture = null
+        watermarkEffect = null
+
+        mainHandler.postDelayed({
+            if (sessionActive && !sessionClosing) {
+                AppLogger.warn("Gravação: retomada automática sem marca-d’água após falha nativa.")
+                bindCamera(settings)
+            }
+            watermarkRecoveryScheduled = false
+        }, WATERMARK_RECOVERY_DELAY_MILLIS)
     }
 
     /** Permite que o overlay pause/retome sem acessar a câmera diretamente. */
@@ -727,12 +825,13 @@ class RecordingService : LifecycleService() {
     override fun onDestroy() {
         sessionPaused = false
         publishRecordingState(active = false, paused = false)
-        handler.removeCallbacksAndMessages(null)
+        mainHandler.removeCallbacksAndMessages(null)
         runCatching { unregisterReceiver(overlayControlReceiver) }
         recording?.stop()
         stopLocationUpdates()
         runCatching { cameraProvider?.unbindAll() }
         runCatching { watermarkEffect?.close() }
+        if (::watermarkThread.isInitialized) watermarkThread.quitSafely()
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -774,5 +873,19 @@ class RecordingService : LifecycleService() {
         const val LOCATION_STALE_MS = 15_000L
         const val CIRCULAR_SEGMENT_MILLIS = 60_000L
         const val DEFAULT_CIRCULAR_WINDOW_MILLIS = 5 * 60_000L
+        private const val WATERMARK_RECOVERY_DELAY_MILLIS = 400L
+
+        /** Limpa o indicador persistido se o processo anterior morreu abruptamente. */
+        fun clearStateAfterProcessStart(context: Context): Boolean {
+            val preferences = context.getSharedPreferences(RECORDING_STATE_PREFERENCES, Context.MODE_PRIVATE)
+            val wasActive = preferences.getBoolean(KEY_RECORDING_ACTIVE, false)
+            if (wasActive) {
+                preferences.edit()
+                    .putBoolean(KEY_RECORDING_ACTIVE, false)
+                    .putBoolean(KEY_RECORDING_PAUSED, false)
+                    .commit()
+            }
+            return wasActive
+        }
     }
 }

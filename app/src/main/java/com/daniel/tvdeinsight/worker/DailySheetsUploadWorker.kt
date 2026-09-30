@@ -5,6 +5,7 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.daniel.tvdeinsight.data.repository.TripSyncRepository
+import com.daniel.tvdeinsight.data.sheets.SheetsFailurePolicy
 import com.daniel.tvdeinsight.logging.AppLogger
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -21,14 +22,14 @@ class DailySheetsUploadWorker @AssistedInject constructor(
             val completed = syncRepository.uploadPending()
             if (!completed) {
                 AppLogger.warn("Worker Sheets upload adiado: configuração ainda indisponível")
-                return Result.retry()
+                return Result.failure()
             }
             AppLogger.info("Worker Sheets upload horário concluído com sucesso")
             Result.success()
         } catch (error: Throwable) {
             if (error is kotlinx.coroutines.CancellationException) throw error
             AppLogger.error("Envio diário para Sheets falhou", error)
-            Result.retry()
+            if (SheetsFailurePolicy.shouldRetry(error)) Result.retry() else Result.failure()
         }
     }
 }

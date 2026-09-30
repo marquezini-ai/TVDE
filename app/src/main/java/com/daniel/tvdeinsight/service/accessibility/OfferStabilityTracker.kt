@@ -65,6 +65,12 @@ internal class OfferStabilityTracker(
         candidates.clear()
         published.clear()
     }
+
+    /** Limpa apenas o estado de uma plataforma quando o cartão foi fechado. */
+    fun clear(platform: OfferPlatform) {
+        candidates.remove(platform)
+        published.remove(platform)
+    }
 }
 
 internal fun TripOffer.stabilitySignature(): String = listOf(

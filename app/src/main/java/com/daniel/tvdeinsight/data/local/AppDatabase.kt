@@ -5,7 +5,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [TripEntity::class], version = 3, exportSchema = false)
+@Database(entities = [TripEntity::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun tripDao(): TripDao
 
@@ -73,6 +73,15 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_2_3: Migration = object : Migration(2, 3) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE trip_history ADD COLUMN screenshotFileName TEXT")
+            }
+        }
+
+        val MIGRATION_3_4: Migration = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_trip_history_sourceDeviceId_recordedAtMillis " +
+                        "ON trip_history(sourceDeviceId, recordedAtMillis)"
+                )
             }
         }
     }

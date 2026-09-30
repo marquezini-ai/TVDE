@@ -58,8 +58,8 @@ android {
         applicationId = "com.daniel.tvdeinsight"
         minSdk = 29
         targetSdk = 35
-        versionCode = 142
-        versionName = "0.5.39-unified"
+        versionCode = 172
+        versionName = "0.5.69-unified"
 
         buildConfigField("String", "GOOGLE_SHEETS_SPREADSHEET_ID", sheetsSpreadsheetId.asBuildConfigString())
         buildConfigField(
@@ -140,6 +140,9 @@ dependencies {
 
     // ML Kit para leitura de textos na tela (OCR)
     implementation(libs.mlkit.text.recognition)
+    implementation("org.opencv:opencv:4.12.0")
+    // Managed references only; native memory telemetry is provided by qa/stress_test.sh.
+    debugImplementation("com.squareup.leakcanary:leakcanary-android:2.14")
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
@@ -157,5 +160,7 @@ dependencies {
     implementation("androidx.media3:media3-common:1.9.0")
 
     testImplementation(libs.junit)
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

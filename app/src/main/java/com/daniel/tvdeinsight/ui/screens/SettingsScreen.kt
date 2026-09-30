@@ -596,27 +596,23 @@ fun SettingsScreen(paddingValues: PaddingValues, viewModel: MainViewModel = hilt
             }
         }
 
-        Card(
-            shape = MaterialTheme.shapes.large,
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            modifier = Modifier.fillMaxWidth(),
-            elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-        ) {
-            Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Diagnóstico", fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                Button(
-                    onClick = {
-                        (context as? MainActivity)?.let { activity ->
-                            if (BuildConfig.IS_ADMIN_APP) activity.startLogDownload()
-                            else activity.shareCompleteLogViaWhatsApp()
-                        }
-                    },
-                    enabled = true,
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                    shape = MaterialTheme.shapes.medium
-                ) {
-                    Text(if (BuildConfig.IS_ADMIN_APP) "Baixar log completo" else "Enviar log pelo WhatsApp")
+        // Client settings stay focused on driving. The diagnostic export remains
+        // available only to the Admin Debug build used during field validation.
+        if (BuildConfig.IS_ADMIN_APP && BuildConfig.DEBUG) {
+            Card(
+                shape = MaterialTheme.shapes.large,
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                modifier = Modifier.fillMaxWidth(),
+                elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+            ) {
+                Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Diagnóstico técnico", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Button(
+                        onClick = { (context as? MainActivity)?.startLogDownload() },
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        shape = MaterialTheme.shapes.medium
+                    ) { Text("Baixar log técnico") }
                 }
             }
         }

@@ -421,6 +421,23 @@ class UberOfferCardTextExtractorTest {
         assertEquals(111.0, offer.tripDurationMinutes!!, 0.0001)
     }
 
+    @Test fun `returns card bounds for the independent OCR region`() {
+        val card = extractor.extractCard(
+            listOf(
+                UberOfferCardTextExtractor.OcrBlock("UberX", 300, 340, 40, 220),
+                UberOfferCardTextExtractor.OcrBlock("€ 5,79", 360, 420, 42, 250),
+                UberOfferCardTextExtractor.OcrBlock("Após dedução de taxa de serviço", 430, 470, 40, 700),
+                UberOfferCardTextExtractor.OcrBlock("5 minutos (2.1 km) de distância", 520, 560, 80, 760),
+                UberOfferCardTextExtractor.OcrBlock("Rua de São Tomé 1055C, Porto", 570, 610, 80, 780),
+                UberOfferCardTextExtractor.OcrBlock("Viagem de 12 minutos (4.8 km)", 630, 670, 80, 750),
+                UberOfferCardTextExtractor.OcrBlock("R. Sara Afonso, Matosinhos", 680, 720, 80, 790)
+            )
+        )
+
+        requireNotNull(card)
+        assertEquals(UberOfferCardTextExtractor.OcrBounds(40, 300, 790, 720), card.bounds)
+    }
+
     private fun block(text: String, top: Int) =
         UberOfferCardTextExtractor.OcrBlock(text = text, top = top, bottom = top + 40)
 }

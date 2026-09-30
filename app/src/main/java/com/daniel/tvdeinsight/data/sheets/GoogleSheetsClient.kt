@@ -90,11 +90,12 @@ class GoogleSheetsClient @Inject constructor(
 
     private suspend fun request(method: String, url: String, body: String?): String {
         check(isConfigured) { "Google Sheets não configurado: falta o ID da planilha ou o JSON" }
+        val token = accessToken()
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = TimeUnit.SECONDS.toMillis(15).toInt()
             readTimeout = TimeUnit.SECONDS.toMillis(20).toInt()
-            setRequestProperty("Authorization", "Bearer ${accessToken()}")
+            setRequestProperty("Authorization", "Bearer $token")
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
             doInput = true
             if (body != null) {
@@ -105,8 +106,12 @@ class GoogleSheetsClient @Inject constructor(
         return try {
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val response = BufferedReader(InputStreamReader(stream, StandardCharsets.UTF_8)).use { it.readText() }
-            if (status !in 200..299) error("Google Sheets HTTP $status: ${response.take(500)}")
+            val response = stream?.let {
+                BufferedReader(InputStreamReader(it, StandardCharsets.UTF_8)).use { reader -> reader.readText() }
+            }.orEmpty()
+            if (status !in 200..299) {
+                throw SheetsHttpException(status, "Google Sheets HTTP $status: ${response.take(500)}")
+            }
             response
         } finally {
             connection.disconnect()
@@ -126,18 +131,25 @@ class GoogleSheetsClient @Inject constructor(
             doOutput = true
             setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
         }
-        val form = "grant_type=${URLEncoder.encode(GRANT_TYPE, "UTF-8")}" +
-            "&assertion=${URLEncoder.encode(assertion, "UTF-8")}"
-        connection.outputStream.use { it.write(form.toByteArray(StandardCharsets.UTF_8)) }
-        val status = connection.responseCode
-        val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-        val response = BufferedReader(InputStreamReader(stream, StandardCharsets.UTF_8)).use { it.readText() }
-        connection.disconnect()
-        if (status !in 200..299) error("Falha ao obter token Google: HTTP $status")
-        val json = JSONObject(response)
-        cachedToken = json.getString("access_token")
-        tokenExpiresAtMillis = now + json.optLong("expires_in", 3600L) * 1000L
-        cachedToken!!
+        try {
+            val form = "grant_type=${URLEncoder.encode(GRANT_TYPE, "UTF-8")}" +
+                "&assertion=${URLEncoder.encode(assertion, "UTF-8")}" 
+            connection.outputStream.use { it.write(form.toByteArray(StandardCharsets.UTF_8)) }
+            val status = connection.responseCode
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            val response = stream?.let {
+                BufferedReader(InputStreamReader(it, StandardCharsets.UTF_8)).use { reader -> reader.readText() }
+            }.orEmpty()
+            if (status !in 200..299) {
+                throw SheetsHttpException(status, "Falha ao obter token Google: HTTP $status: ${response.take(500)}")
+            }
+            val json = JSONObject(response)
+            cachedToken = json.getString("access_token")
+            tokenExpiresAtMillis = now + json.optLong("expires_in", 3600L) * 1000L
+            cachedToken!!
+        } finally {
+            connection.disconnect()
+        }
     }
 
     private fun loadCredentials(): ServiceAccountCredentials {

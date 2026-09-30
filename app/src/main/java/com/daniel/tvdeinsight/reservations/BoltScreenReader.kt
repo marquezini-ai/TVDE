@@ -26,10 +26,11 @@ object BoltScreenReader {
         val pedidos = when {
             acceptedSegment?.isSelected == true -> false
             scheduledSegment?.isSelected == true -> true
-            titleText == "pedidos" -> true
+            // "Pedidos" appears in ordinary Bolt UI text too. Treat it as the
+            // reservations tab only when the dedicated scheduled segment exists.
+            titleText == "pedidos de agendamento" -> true
             acceptedText == "aceites" && titleText.isBlank() -> false
-            else -> AccessibilityNodeUtils.findText(root, "Pedidos") != null &&
-                AccessibilityNodeUtils.findText(root, "Aceites")?.isSelected != true
+            else -> scheduledSegment != null && acceptedSegment?.isSelected != true
         }
         return BoltScreen(true, pedidos)
     }

@@ -27,6 +27,7 @@ object SheetsSyncScheduler {
 
     private const val UPLOAD_EXECUTION_WORK = "sheets_upload_alarm_execution"
     private const val DOWNLOAD_EXECUTION_WORK = "sheets_download_alarm_execution"
+    private const val RETRY_BACKOFF_MINUTES = 1L
     private const val UPLOAD_MINUTE = 0
     private const val DOWNLOAD_MINUTE = 30
     private const val UPLOAD_REQUEST_CODE = 4100
@@ -84,20 +85,26 @@ object SheetsSyncScheduler {
         val request = when (action) {
             ACTION_UPLOAD -> OneTimeWorkRequestBuilder<DailySheetsUploadWorker>()
                 .setConstraints(constraints)
-                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, RETRY_BACKOFF_MINUTES, TimeUnit.MINUTES)
                 .build()
             ACTION_DOWNLOAD -> OneTimeWorkRequestBuilder<DailySheetsDownloadWorker>()
                 .setConstraints(constraints)
-                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, RETRY_BACKOFF_MINUTES, TimeUnit.MINUTES)
                 .build()
             else -> return
         }
         val uniqueName = if (action == ACTION_UPLOAD) UPLOAD_EXECUTION_WORK else DOWNLOAD_EXECUTION_WORK
         AppLogger.info(
-            "Sheets alarme disparado: tipo=${actionLabel(action)}, id=${request.id}, rede=CONNECTED"
+            "Sheets execução enfileirada: tipo=${actionLabel(action)}, id=${request.id}, rede=CONNECTED"
         )
         val operation = workManager.enqueueUniqueWork(uniqueName, ExistingWorkPolicy.KEEP, request)
         observeEnqueue(workManager, uniqueName, operation.result)
+    }
+
+    /** Enfileira upload/download pendentes; WorkManager aguarda Internet e recupera após matar o processo. */
+    fun enqueuePendingSync(context: Context) {
+        enqueueFromAlarm(context, ACTION_UPLOAD)
+        enqueueFromAlarm(context, ACTION_DOWNLOAD)
     }
 
     fun canScheduleExactAlarms(context: Context): Boolean {

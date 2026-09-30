@@ -36,12 +36,15 @@ object WeeklyAvailability {
         fallback: DailyAvailability,
         enabledDays: Set<Int> = (1..7).toSet()
     ): Boolean {
-        if (date.dayOfWeek.value !in enabledDays) return false
         val normalizedTime = timeMinutes.coerceIn(0, MINUTES_PER_DAY - 1)
-        val current = scheduleFor(schedules, date.dayOfWeek.value, fallback)
-        if (containsOnAnchorDay(current, normalizedTime)) return true
+        val currentDay = date.dayOfWeek.value
+        val current = scheduleFor(schedules, currentDay, fallback)
+        // O dia atual só pode disponibilizar a parcela que lhe pertence. Isto
+        // preserva um dia explicitamente desligado sem cortar, por engano, a
+        // continuação após meia-noite de um dia anterior que esteja ligado.
+        if (currentDay in enabledDays && containsOnAnchorDay(current, normalizedTime)) return true
 
-        val previousDay = if (date.dayOfWeek.value == 1) 7 else date.dayOfWeek.value - 1
+        val previousDay = if (currentDay == 1) 7 else currentDay - 1
         val previous = scheduleFor(schedules, previousDay, fallback)
         return previousDay in enabledDays && previous.startMinutes > previous.endMinutes && normalizedTime <= previous.endMinutes
     }

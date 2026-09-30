@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.AlarmManager
 import android.content.ActivityNotFoundException
 import android.content.ClipData
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -23,10 +24,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.daniel.tvdeinsight.domain.model.RuleSettings
-import com.daniel.tvdeinsight.data.repository.TripSyncRepository
 import com.daniel.tvdeinsight.license.LicenseManager
 import com.daniel.tvdeinsight.logging.AppLogger
 import com.daniel.tvdeinsight.service.accessibility.UberOfferAccessibilityService
+import com.daniel.tvdeinsight.service.notification.BoltOfferNotificationListener
 import com.daniel.tvdeinsight.ui.TvdeInsightApp
 import com.daniel.tvdeinsight.ui.screens.MainViewModel
 import com.daniel.tvdeinsight.worker.SheetsSyncScheduler
@@ -42,22 +43,28 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
     @Inject lateinit var licenseManager: LicenseManager
-    @Inject lateinit var tripSyncRepository: TripSyncRepository
     private lateinit var serviceManager: MainServiceManager
     private var startupPermissionsSettled = false
     private var overlayPermissionRequestInFlight = false
+    private var boltNotificationAccessRequestInFlight = false
     private val requestForegroundLocationPermission = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val granted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
             permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        AppLogger.info("Permissão de localização em primeiro plano: concedida=$granted")
+        val cameraGranted = permissions[Manifest.permission.CAMERA] == true ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+        AppLogger.info("Permissões de primeiro uso: localização=$granted, câmera=$cameraGranted")
         if (granted) requestBackgroundLocationPermissionIfNeeded()
         else requestBatteryOptimizationPermissionIfNeeded()
     }
     private val requestNotificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { granted -> AppLogger.info("Permissão de notificações: concedida=$granted") }
+    ) { granted ->
+        AppLogger.info("Permissão de notificações: concedida=$granted")
+        requestLocationPermissionForHistoryIfNeeded()
+    }
     private val requestBackgroundLocationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -78,7 +85,7 @@ class MainActivity : ComponentActivity() {
         val granted = SheetsSyncScheduler.canScheduleExactAlarms(this)
         AppLogger.info("Resultado da permissão de alarmes exatos: concedida=$granted")
         SheetsSyncScheduler.scheduleHourly(this)
-        markStartupPermissionsSettled()
+        requestBoltNotificationAccessIfNeeded()
     }
     private val createLogDocument = registerForActivityResult(
         ActivityResultContracts.CreateDocument("text/plain")
@@ -97,8 +104,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         AppLogger.info("MainActivity criada")
         serviceManager = MainServiceManager(this, ::uploadTripsWhenMonitoringStarts)
-        requestLocationPermissionForHistoryIfNeeded()
-        requestNotificationPermissionIfNeeded()
+        startFirstUsePermissionFlowIfNeeded()
         restoreSheetsSync()
 
         lifecycleScope.launch {
@@ -122,6 +128,19 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (boltNotificationAccessRequestInFlight) {
+            boltNotificationAccessRequestInFlight = false
+            val enabled = isBoltNotificationListenerEnabled()
+            AppLogger.info("Resultado do acesso às notificações Bolt: autorizado=$enabled")
+            if (!enabled) {
+                Toast.makeText(
+                    this,
+                    "Sem acesso às notificações, as ofertas Bolt não serão acionadas.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            markStartupPermissionsSettled()
+        }
         if (overlayPermissionRequestInFlight) {
             overlayPermissionRequestInFlight = false
             if (Settings.canDrawOverlays(this)) {
@@ -143,11 +162,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun uploadTripsWhenMonitoringStarts() {
-        lifecycleScope.launch(Dispatchers.IO) {
-            AppLogger.info("Monitorização iniciada: upload imediato para a Google Sheet solicitado")
-            val completed = tripSyncRepository.uploadPending()
-            AppLogger.info("Upload imediato ao iniciar monitorização concluído: sucesso=$completed")
-        }
+        AppLogger.info("Monitorização iniciada: sincronização Google Sheets colocada na fila")
+        SheetsSyncScheduler.enqueuePendingSync(this)
     }
 
     /**
@@ -156,11 +172,8 @@ class MainActivity : ComponentActivity() {
      */
     private fun restoreSheetsSync() {
         SheetsSyncScheduler.scheduleHourly(this)
-        lifecycleScope.launch(Dispatchers.IO) {
-            AppLogger.info("Sheets: sincronização de recuperação solicitada ao abrir a aplicação")
-            val completed = tripSyncRepository.sync()
-            AppLogger.info("Sheets: sincronização de recuperação concluída: sucesso=$completed")
-        }
+        AppLogger.info("Sheets: sincronização de recuperação colocada na fila com requisito de Internet")
+        SheetsSyncScheduler.enqueuePendingSync(this)
     }
 
     /**
@@ -168,16 +181,43 @@ class MainActivity : ComponentActivity() {
      * localização precisa de autorização contínua para ser guardada no histórico.
      * A funcionalidade continua a operar caso o utilizador não a autorize.
      */
+    /**
+     * O Android só mostra um pedido runtime de cada vez.  A sequência evita
+     * que POST_NOTIFICATIONS fique pendente até à próxima abertura da app.
+     */
+    private fun startFirstUsePermissionFlowIfNeeded() {
+        val preferences = getPreferences(MODE_PRIVATE)
+        if (preferences.getBoolean(KEY_FIRST_USE_PERMISSION_FLOW_FINISHED, false)) {
+            // O acesso ao NotificationListenerService pode ser revogado pelo
+            // Android/Samsung após uma atualização ou otimização de bateria.
+            // Nesse caso, voltar a abrir a definição é necessário para que a
+            // Bolt continue a ter o seu gatilho único por notificação.
+            if (!isBoltNotificationListenerEnabled()) {
+                requestBoltNotificationAccessIfNeeded()
+                return
+            }
+            requestOverlayPermissionOnFirstInstallIfNeeded()
+            return
+        }
+        requestNotificationPermissionIfNeeded()
+    }
+
     private fun requestLocationPermissionForHistoryIfNeeded() {
-        if (hasForegroundLocationPermission()) {
-            requestBackgroundLocationPermissionIfNeeded()
-        } else {
+        val missing = buildList {
+            if (!hasForegroundLocationPermission()) {
+                add(Manifest.permission.ACCESS_FINE_LOCATION)
+                add(Manifest.permission.ACCESS_COARSE_LOCATION)
+            }
+            if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.CAMERA) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) add(Manifest.permission.CAMERA)
+        }
+        if (missing.isNotEmpty()) {
             requestForegroundLocationPermission.launch(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                )
+                missing.toTypedArray()
             )
+        } else {
+            requestBackgroundLocationPermissionIfNeeded()
         }
     }
 
@@ -185,7 +225,11 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
                 android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        ) {
+            requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            requestLocationPermissionForHistoryIfNeeded()
+        }
     }
 
     private fun requestBackgroundLocationPermissionIfNeeded() {
@@ -245,13 +289,13 @@ class MainActivity : ComponentActivity() {
     private fun requestExactAlarmPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             SheetsSyncScheduler.scheduleHourly(this)
-            markStartupPermissionsSettled()
+            requestBoltNotificationAccessIfNeeded()
             return
         }
         if (SheetsSyncScheduler.canScheduleExactAlarms(this)) {
             AppLogger.info("Permissão de alarmes exatos já concedida")
             SheetsSyncScheduler.scheduleHourly(this)
-            markStartupPermissionsSettled()
+            requestBoltNotificationAccessIfNeeded()
             return
         }
 
@@ -266,12 +310,45 @@ class MainActivity : ComponentActivity() {
         } catch (error: ActivityNotFoundException) {
             AppLogger.warn("Definições de alarmes exatos indisponíveis; mantendo modo inexacto", error)
             SheetsSyncScheduler.scheduleHourly(this)
-            markStartupPermissionsSettled()
+            requestBoltNotificationAccessIfNeeded()
         } catch (error: SecurityException) {
             AppLogger.warn("Sistema recusou abrir a permissão de alarmes exatos", error)
             SheetsSyncScheduler.scheduleHourly(this)
+            requestBoltNotificationAccessIfNeeded()
+        }
+    }
+
+    /**
+     * O gatilho Bolt depende do acesso especial às notificações. A permissão
+     * POST_NOTIFICATIONS apenas controla notificações próprias da aplicação e
+     * não ativa um NotificationListenerService.
+     */
+    private fun requestBoltNotificationAccessIfNeeded() {
+        if (isBoltNotificationListenerEnabled()) {
+            AppLogger.info("Listener de notificações Bolt já autorizado")
+            markStartupPermissionsSettled()
+            return
+        }
+
+        if (boltNotificationAccessRequestInFlight) return
+        boltNotificationAccessRequestInFlight = true
+        AppLogger.info("Primeiro uso: a solicitar acesso às notificações para acionar ofertas Bolt")
+        try {
+            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+        } catch (error: Exception) {
+            boltNotificationAccessRequestInFlight = false
+            AppLogger.warn("Não foi possível abrir o acesso às notificações Bolt", error)
             markStartupPermissionsSettled()
         }
+    }
+
+    private fun isBoltNotificationListenerEnabled(): Boolean {
+        val enabled = Settings.Secure.getString(
+            contentResolver,
+            "enabled_notification_listeners"
+        ).orEmpty()
+        val expected = ComponentName(this, BoltOfferNotificationListener::class.java).flattenToString()
+        return enabled.split(':').any { it.equals(expected, ignoreCase = true) }
     }
 
     /**
@@ -282,9 +359,15 @@ class MainActivity : ComponentActivity() {
      */
     private fun requestOverlayPermissionOnFirstInstallIfNeeded() {
         if (!startupPermissionsSettled || overlayPermissionRequestInFlight) return
-        if (Settings.canDrawOverlays(this)) return
         val preferences = getPreferences(MODE_PRIVATE)
-        if (preferences.getBoolean(KEY_OVERLAY_PERMISSION_PROMPTED, false)) return
+        if (Settings.canDrawOverlays(this)) {
+            requestAccessibilityPermissionOnFirstUseIfNeeded()
+            return
+        }
+        if (preferences.getBoolean(KEY_OVERLAY_PERMISSION_PROMPTED, false)) {
+            requestAccessibilityPermissionOnFirstUseIfNeeded()
+            return
+        }
 
         preferences.edit().putBoolean(KEY_OVERLAY_PERMISSION_PROMPTED, true).apply()
         overlayPermissionRequestInFlight = true
@@ -309,7 +392,24 @@ class MainActivity : ComponentActivity() {
 
     private fun markStartupPermissionsSettled() {
         startupPermissionsSettled = true
+        getPreferences(MODE_PRIVATE).edit()
+            .putBoolean(KEY_FIRST_USE_PERMISSION_FLOW_FINISHED, true)
+            .apply()
         requestOverlayPermissionOnFirstInstallIfNeeded()
+    }
+
+    /** A acessibilidade é uma definição especial: abre-se uma única vez na configuração inicial. */
+    private fun requestAccessibilityPermissionOnFirstUseIfNeeded() {
+        val preferences = getPreferences(MODE_PRIVATE)
+        if (preferences.getBoolean(KEY_ACCESSIBILITY_PERMISSION_PROMPTED, false)) return
+        if (MainServiceManager.isAccessibilityServiceEnabled(this, UberOfferAccessibilityService::class.java)) {
+            preferences.edit().putBoolean(KEY_ACCESSIBILITY_PERMISSION_PROMPTED, true).apply()
+            return
+        }
+        preferences.edit().putBoolean(KEY_ACCESSIBILITY_PERMISSION_PROMPTED, true).apply()
+        AppLogger.info("Primeiro uso: a solicitar ativação do serviço de acessibilidade")
+        runCatching { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+            .onFailure { AppLogger.warn("Não foi possível abrir as definições de acessibilidade", it) }
     }
 
     fun shareCompleteLogViaWhatsApp() {
@@ -371,7 +471,8 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        private fun isAccessibilityServiceEnabled(context: Context, service: Class<*>): Boolean {
+        companion object {
+        fun isAccessibilityServiceEnabled(context: Context, service: Class<*>): Boolean {
             val expectedServiceName = "${context.packageName}/${service.canonicalName}"
             val enabledServices = Settings.Secure.getString(
                 context.contentResolver,
@@ -385,11 +486,14 @@ class MainActivity : ComponentActivity() {
             }
             return false
         }
+        }
     }
 
     private companion object {
         const val WHATSAPP_PACKAGE = "com.whatsapp"
         const val SUPPORT_WHATSAPP_NUMBER = "351912521498"
         const val KEY_OVERLAY_PERMISSION_PROMPTED = "overlay_permission_prompted"
+        const val KEY_ACCESSIBILITY_PERMISSION_PROMPTED = "accessibility_permission_prompted"
+        const val KEY_FIRST_USE_PERMISSION_FLOW_FINISHED = "first_use_permission_flow_finished"
     }
 }

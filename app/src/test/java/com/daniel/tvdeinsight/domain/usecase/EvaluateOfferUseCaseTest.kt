@@ -25,6 +25,30 @@ class EvaluateOfferUseCaseTest {
     }
 
     @Test
+    fun `zero kilometre pickup is accepted and never rejected by pickup threshold`() {
+        val decision = useCase(
+            offer = TripOffer(
+                price = 5.77,
+                distanceKm = 7.1,
+                durationMinutes = 13.0,
+                pickupDistanceKm = 0.0,
+                pickupDurationMinutes = 1.0,
+                tripDistanceKm = 7.1,
+                tripDurationMinutes = 12.0,
+                platform = OfferPlatform.BOLT
+            ),
+            settings = settings.copy(
+                isKmCriterionEnabled = false,
+                isHourCriterionEnabled = false,
+                isLongTripCriterionEnabled = false
+            )
+        )
+
+        assertEquals(DecisionType.ACEITAR, decision.type)
+        assertEquals(DecisionType.ACEITAR, decision.criterionDecisions[EvaluationCriterion.RECOLHA])
+    }
+
+    @Test
     fun `pickup between ideal and acceptable distance requires review`() {
         assertEquals(DecisionType.ANALISAR, evaluateAtPickupDistance(3.0).type)
     }

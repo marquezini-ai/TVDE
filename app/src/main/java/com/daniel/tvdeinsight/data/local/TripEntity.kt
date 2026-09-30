@@ -13,6 +13,7 @@ import com.daniel.tvdeinsight.domain.model.OfferPlatform
     primaryKeys = ["sourceDeviceId", "id"],
     indices = [
         Index(value = ["sourceDeviceId", "deduplicationKey"], unique = true),
+        Index(value = ["sourceDeviceId", "recordedAtMillis"]),
         Index(value = ["recordedAtMillis"]),
         Index(value = ["platform"])
     ]
@@ -64,6 +65,11 @@ data class PickupAddressSummary(
 )
 
 object TripEntityMapper {
+    private val whitespaceRegex = Regex("\\s+")
+    private val platformsByName = OfferPlatform.entries.associateBy(OfferPlatform::name)
+    private val decisionsByName = DecisionType.entries.associateBy(DecisionType::name)
+    private val criteriaByName = EvaluationCriterion.entries.associateBy(EvaluationCriterion::name)
+
     fun fromDomain(entry: OfferHistoryEntry): TripEntity = TripEntity(
         id = entry.id,
         recordedAtMillis = entry.recordedAtMillis,
@@ -97,8 +103,7 @@ object TripEntityMapper {
     )
 
     fun toDomain(entity: TripEntity): OfferHistoryEntry {
-        val platform = OfferPlatform.entries.firstOrNull { it.name == entity.platform }
-            ?: OfferPlatform.UNKNOWN
+        val platform = platformsByName[entity.platform] ?: OfferPlatform.UNKNOWN
         return OfferHistoryEntry(
         id = entity.id,
         recordedAtMillis = entity.recordedAtMillis,
@@ -120,16 +125,16 @@ object TripEntityMapper {
         pickupAddress = entity.pickupAddress,
         destinationAddress = entity.destinationAddress,
         category = CategoryNameSanitizer.cleanForPlatform(entity.category, platform),
-        decisionType = DecisionType.entries.firstOrNull { it.name == entity.decisionType } ?: DecisionType.ANALISAR,
+        decisionType = decisionsByName[entity.decisionType] ?: DecisionType.ANALISAR,
         activeCriteria = entity.activeCriteria.splitToSequence(',')
-            .mapNotNull { value -> EvaluationCriterion.entries.firstOrNull { it.name == value } }
+            .mapNotNull(criteriaByName::get)
             .toSet(),
         criterionDecisions = entity.criterionDecisions.splitToSequence('|')
             .mapNotNull { pair ->
                 val parts = pair.split('=', limit = 2)
                 if (parts.size != 2) return@mapNotNull null
-                val criterion = EvaluationCriterion.entries.firstOrNull { it.name == parts[0] } ?: return@mapNotNull null
-                val decision = DecisionType.entries.firstOrNull { it.name == parts[1] } ?: return@mapNotNull null
+                val criterion = criteriaByName[parts[0]] ?: return@mapNotNull null
+                val decision = decisionsByName[parts[1]] ?: return@mapNotNull null
                 criterion to decision
         }.toMap(),
         isStopRejection = entity.isStopRejection,
@@ -152,5 +157,5 @@ object TripEntityMapper {
     ).joinToString("|")
 
     private fun Double?.roundKey(): String = this?.let { "%.2f".format(java.util.Locale.US, it) }.orEmpty()
-    private fun String?.normalizedKey(): String = orEmpty().trim().lowercase().replace("\\s+".toRegex(), " ")
+    private fun String?.normalizedKey(): String = orEmpty().trim().lowercase().replace(whitespaceRegex, " ")
 }

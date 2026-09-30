@@ -3,6 +3,7 @@ package com.daniel.tvdeinsight.ui.screens
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.daniel.tvdeinsight.data.network.NetworkStatusMonitor
 import com.daniel.tvdeinsight.data.repository.SettingsRepository
 import com.daniel.tvdeinsight.data.repository.ThemePreferencesRepository
 import com.daniel.tvdeinsight.domain.model.RuleSettings
@@ -21,12 +22,14 @@ import javax.inject.Inject
 class MainViewModel @Inject constructor(
     application: Application,
     private val settingsRepository: SettingsRepository,
-    private val themePreferencesRepository: ThemePreferencesRepository
+    private val themePreferencesRepository: ThemePreferencesRepository,
+    networkStatusMonitor: NetworkStatusMonitor
 ) : AndroidViewModel(application) {
 
     private val _settings = MutableStateFlow(RuleSettings(isAppRunning = false))
     val settings: StateFlow<RuleSettings> = _settings.asStateFlow()
     val themeMode = themePreferencesRepository.themeMode
+    val hasValidatedInternet = networkStatusMonitor.hasValidatedInternet
     private val settingsWriteMutex = Mutex()
     private var pendingSettingsWrites = 0
 

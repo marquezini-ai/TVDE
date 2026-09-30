@@ -109,6 +109,29 @@ class UberOfferParserTest {
         assertEquals(1.8, offer.distanceKm, PRECISION)
     }
 
+    @Test fun `recovers lost pickup decimal before global speed ceiling is exceeded`() {
+        val offer = parser.parse(
+            "Electric\\n€ 5,82\\n6 minutos (13 km) de distância\\n" +
+                "Viagem de 17 minutos (11.8 km)\\nAceitar"
+        )
+
+        requireNotNull(offer)
+        assertEquals(1.3, offer.pickupDistanceKm!!, PRECISION)
+        assertEquals(11.8, offer.tripDistanceKm!!, PRECISION)
+        assertEquals(13.1, offer.distanceKm, PRECISION)
+    }
+
+    @Test fun `keeps a plausible whole-number pickup distance unchanged`() {
+        val offer = parser.parse(
+            "UberX\\n€ 16,20\\n12 minutos (13 km) de distância\\n" +
+                "Viagem de 18 minutos (8.4 km)\\nAceitar"
+        )
+
+        requireNotNull(offer)
+        assertEquals(13.0, offer.pickupDistanceKm!!, PRECISION)
+        assertEquals(21.4, offer.distanceKm, PRECISION)
+    }
+
     @Test fun `rejects an OCR distance that would require an impossible speed`() {
         assertNull(
             parser.parse(

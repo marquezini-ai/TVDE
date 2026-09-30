@@ -14,6 +14,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.content.ContextCompat
 import java.util.concurrent.Executors
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Integração com a Bolt. Este serviço não desenha UI nem gere o foreground service;
@@ -39,6 +40,13 @@ class BoltReservationCoordinator(
     private var scanCountSincePersist = 0
     private var evaluationInProgress = false
     private val pendingHistoryEvaluations = mutableSetOf<String>()
+    /**
+     * A Bolt emite várias atualizações da mesma árvore enquanto a lista está
+     * parada. Sem esta cache, cada atualização disparava nova avaliação,
+     * escrita no histórico e logging, mesmo sem mudança de cartão nem de
+     * configuração. A chave inclui todas as preferências que afetam a decisão.
+     */
+    private val evaluationCache = ConcurrentHashMap<String, CachedEvaluation>()
     private val evaluationExecutor = Executors.newSingleThreadExecutor()
     private val pickupDistanceResolver by lazy { PickupDistanceResolver(service) }
     private val foregroundCheck = Runnable { verifyBoltForeground() }
@@ -98,6 +106,12 @@ class BoltReservationCoordinator(
     }
 
     fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // Screen probes are explicit commands. While no search/accept/refresh
+        // sequence is active, Bolt's animated map must not trigger a complete
+        // reservation-tree scan on every accessibility event.
+        if (!searchActive && !reservationInProgress && !refreshInProgress &&
+            !AppPreferences.isSearching(service)
+        ) return
         val packageName = event?.packageName?.toString()
         val root = findBoltRoot()
         val screen = BoltScreenReader.read(root)
@@ -163,6 +177,7 @@ class BoltReservationCoordinator(
         reservationInProgress = false
         refreshInProgress = false
         noEligibleRideSince = 0L
+        evaluationCache.clear()
         AppPreferences.setSearching(service, true)
         AutomationStateStore.transition(service, AutomationPhase.SEARCHING, "scheduledSegment/Pedidos")
         DiagnosticLogger.log("Busca iniciada diretamente em scheduledSegment/Pedidos")
@@ -178,6 +193,7 @@ class BoltReservationCoordinator(
         reservationInProgress = false
         refreshInProgress = false
         noEligibleRideSince = 0L
+        evaluationCache.clear()
         handler.removeCallbacks(scanRunnable)
         handler.removeCallbacks(watchdog)
         AppPreferences.setSearching(service, false)
@@ -282,32 +298,43 @@ class BoltReservationCoordinator(
             onComplete(emptyList())
             return
         }
+        val settingsSignature = settings.evaluationSignature()
         evaluationExecutor.execute {
+            val now = System.currentTimeMillis()
+            evaluationCache.entries.removeIf { now - it.value.createdAtMillis > EVALUATION_CACHE_TTL_MILLIS }
             val evaluated = unique.map { hit ->
-                val pickupDistance = if (settings.homeAddress.isBlank()) {
-                    null
-                } else {
-                    pickupDistanceResolver.distanceKm(settings.homeAddress, hit.candidate.origin)
-                }
-                val evaluation = RideEvaluator.evaluate(hit.candidate, settings, pickupDistance)
-                DiagnosticLogger.log(
-                    "Decisão ${hit.candidate.historyId}: ${if (evaluation.accepted) "VERDE" else "VERMELHO"}; " +
-                        "recolha=${pickupDistance?.let { "%.2f km".format(java.util.Locale.US, it) } ?: "indisponível"}; " +
-                        "motivo=${evaluation.reasons.joinToString("; ").ifBlank { "todos os critérios" }}"
-                )
-                EvaluatedRide(hit, evaluation, pickupDistance)
+                val cacheKey = "${hit.candidate.fingerprint}|$settingsSignature"
+                evaluationCache[cacheKey]
+                    ?.takeIf { now - it.createdAtMillis <= EVALUATION_CACHE_TTL_MILLIS }
+                    ?.let { cached -> CachedEvaluationResult(cached.ride.copy(hit = hit), false) }
+                    ?: run {
+                        val pickupDistance = if (settings.homeAddress.isBlank()) {
+                            null
+                        } else {
+                            pickupDistanceResolver.distanceKm(settings.homeAddress, hit.candidate.origin)
+                        }
+                        val evaluation = RideEvaluator.evaluate(hit.candidate, settings, pickupDistance)
+                        val ride = EvaluatedRide(hit, evaluation, pickupDistance)
+                        evaluationCache[cacheKey] = CachedEvaluation(ride, now)
+                        DiagnosticLogger.log(
+                            "Decisão ${hit.candidate.historyId}: ${if (evaluation.accepted) "VERDE" else "VERMELHO"}; " +
+                                "recolha=${pickupDistance?.let { "%.2f km".format(java.util.Locale.US, it) } ?: "indisponível"}; " +
+                                "motivo=${evaluation.reasons.joinToString("; ").ifBlank { "todos os critérios" }}"
+                        )
+                        CachedEvaluationResult(ride, true)
+                    }
             }
             handler.post {
-                evaluated.forEach { item ->
+                evaluated.filter { it.isNew }.forEach { item ->
                     RideHistoryStore.record(
                         service,
-                        item.hit.candidate,
-                        item.evaluation,
-                        item.pickupDistanceKm,
+                        item.ride.hit.candidate,
+                        item.ride.evaluation,
+                        item.ride.pickupDistanceKm,
                         simulated = false
                     )
                 }
-                onComplete(evaluated)
+                onComplete(evaluated.map(CachedEvaluationResult::ride))
             }
         }
     }
@@ -750,6 +777,7 @@ class BoltReservationCoordinator(
         private const val LICENSE_CHECK_INTERVAL_MILLIS = 30_000L
         private const val HISTORY_CAPTURE_INTERVAL_MILLIS = 250L
         private const val WATCHDOG_INTERVAL_MILLIS = 2500L
+        private const val EVALUATION_CACHE_TTL_MILLIS = 3_000L
     }
 }
 
@@ -758,4 +786,28 @@ data class EvaluatedRide(
     val evaluation: RideEvaluation,
     val pickupDistanceKm: Double?
 )
+
+private data class CachedEvaluation(
+    val ride: EvaluatedRide,
+    val createdAtMillis: Long
+)
+
+private data class CachedEvaluationResult(
+    val ride: EvaluatedRide,
+    val isNew: Boolean
+)
+
+/** Apenas fatores que alteram o resultado do RideEvaluator entram nesta chave. */
+private fun ReservationSettings.evaluationSignature(): String = listOf(
+    categories.sorted().joinToString(","),
+    minimumPerKm,
+    minimumTripValue,
+    homeAddress.trim().lowercase(),
+    maxPickupDistanceKm,
+    maxTripDistanceKm,
+    startMinutes,
+    endMinutes,
+    weeklyAvailability.toSortedMap().entries.joinToString(",") { (day, value) -> "$day:${value.startMinutes}-${value.endMinutes}" },
+    enabledDays.sorted().joinToString(",")
+).joinToString("|")
 

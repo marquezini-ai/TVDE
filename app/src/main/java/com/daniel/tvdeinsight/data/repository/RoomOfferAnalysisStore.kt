@@ -1,5 +1,6 @@
 package com.daniel.tvdeinsight.data.repository
 
+import android.content.Context
 import com.daniel.tvdeinsight.data.local.AppDatabase
 import com.daniel.tvdeinsight.data.local.TripEntityMapper
 import com.daniel.tvdeinsight.data.location.DeviceLocationProvider
@@ -9,6 +10,7 @@ import com.daniel.tvdeinsight.domain.model.RuleResult
 import com.daniel.tvdeinsight.domain.model.TripOffer
 import com.daniel.tvdeinsight.logging.AppLogger
 import dagger.Lazy
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,6 +28,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 @Singleton
 class RoomOfferAnalysisStore @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val database: AppDatabase,
     private val deviceLocationProvider: DeviceLocationProvider,
     private val deviceIdentity: DeviceIdentity,
@@ -41,22 +44,26 @@ class RoomOfferAnalysisStore @Inject constructor(
     override val history: StateFlow<List<OfferHistoryEntry>> = database.tripDao()
         .observeBySourceDeviceId(deviceIdentity.sourceId)
         .map { rows -> rows.map(TripEntityMapper::toDomain) }
-        .stateIn(scope, SharingStarted.Eagerly, emptyList())
+        .stateIn(scope, SharingStarted.WhileSubscribed(HISTORY_STOP_TIMEOUT_MS), emptyList())
     override val globalHistory: StateFlow<List<OfferHistoryEntry>> = database.tripDao()
         .observeAll()
         .map { rows -> rows.map(TripEntityMapper::toDomain) }
-        .stateIn(scope, SharingStarted.Eagerly, emptyList())
+        .stateIn(scope, SharingStarted.WhileSubscribed(HISTORY_STOP_TIMEOUT_MS), emptyList())
 
     init {
         scope.launch {
+            val migrationPreferences = context.getSharedPreferences(MIGRATION_PREFERENCES, Context.MODE_PRIVATE)
+            if (migrationPreferences.getBoolean(KEY_LEGACY_MIGRATION_COMPLETE, false)) return@launch
             val legacyEntries = legacyStore.get().readPersistedHistory()
             if (legacyEntries.isNotEmpty()) {
-                database.tripDao().upsertAll(
-                    legacyEntries.map { it.copy(sourceDeviceId = deviceIdentity.sourceId) }
-                        .map(TripEntityMapper::fromDomain)
-                )
+                // A startup migration must never replace newer Room rows or their screenshot links.
+                val entities = legacyEntries.map {
+                    TripEntityMapper.fromDomain(it.copy(sourceDeviceId = deviceIdentity.sourceId))
+                }
+                database.tripDao().insertIgnoreAll(entities)
                 AppLogger.info("Migração concluída: ${legacyEntries.size} ofertas do DataStore para Room")
             }
+            migrationPreferences.edit().putBoolean(KEY_LEGACY_MIGRATION_COMPLETE, true).apply()
         }
     }
 
@@ -103,5 +110,11 @@ class RoomOfferAnalysisStore @Inject constructor(
             val next = maxOf(System.currentTimeMillis(), current + 1L)
             if (lastGeneratedEntryId.compareAndSet(current, next)) return next
         }
+    }
+
+    private companion object {
+        const val HISTORY_STOP_TIMEOUT_MS = 5_000L
+        const val MIGRATION_PREFERENCES = "room_offer_analysis_store"
+        const val KEY_LEGACY_MIGRATION_COMPLETE = "legacy_migration_complete_v1"
     }
 }

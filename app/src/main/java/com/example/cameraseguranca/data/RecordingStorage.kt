@@ -150,6 +150,22 @@ object RecordingStorage {
             .count { file -> runCatching { file.delete() }.getOrDefault(false) }
     }
 
+    /**
+     * A montagem final escreve primeiro em .partial e faz a promoção atómica
+     * para .mp4. Depois de uma queda de processo esse ficheiro não pode voltar a
+     * ser útil, por isso é seguro removê-lo antes de uma sessão nova ou no
+     * arranque, quando não existe finalização em curso.
+     */
+    fun deleteOrphanedPartialFiles(context: Context): Int = managedDirectories(context)
+        .asSequence()
+        .flatMap { (directory, _) -> directory.listFiles().orEmpty().asSequence() }
+        .filter { file ->
+            file.isFile &&
+                file.name.startsWith(FINAL_RECORDING_PREFIX) &&
+                file.name.endsWith(".mp4.partial", ignoreCase = true)
+        }
+        .count { file -> runCatching { file.delete() }.getOrDefault(false) }
+
     /** Exclui manualmente somente um MP4 presente em um diretório privado gerenciado. */
     fun delete(context: Context, file: File): Boolean {
         check(isManagedRecording(context, file) && file.extension.equals("mp4", ignoreCase = true)) {

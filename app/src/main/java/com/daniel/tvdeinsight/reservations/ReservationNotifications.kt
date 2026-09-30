@@ -28,7 +28,7 @@ object ReservationNotifications {
     }
 
     fun reservation(context: Context, ride: RideCandidate) {
-        DiagnosticLogger.log("Notificação de viagem reservada: ${ride.sourceText}")
+        DiagnosticLogger.log("Notificação de viagem reservada: categoria=${ride.category}, distância=${ride.distanceKm}")
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) return
