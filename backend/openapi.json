@@ -1,0 +1,1405 @@
+{
+  "components": {
+    "schemas": {
+      "AggregateQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "card_color": {
+            "$ref": "#/components/schemas/CardColor",
+            "default": "ALL"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CategoryFilter"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "end_date": {
+            "format": "date",
+            "title": "End Date",
+            "type": "string"
+          },
+          "metric": {
+            "$ref": "#/components/schemas/Metric"
+          },
+          "platforms": {
+            "items": {
+              "$ref": "#/components/schemas/Platform"
+            },
+            "maxItems": 2,
+            "minItems": 1,
+            "title": "Platforms",
+            "type": "array"
+          },
+          "shift": {
+            "$ref": "#/components/schemas/Shift",
+            "default": "ALL"
+          },
+          "start_date": {
+            "format": "date",
+            "title": "Start Date",
+            "type": "string"
+          },
+          "value_mode": {
+            "$ref": "#/components/schemas/ValueMode",
+            "default": "FREE"
+          }
+        },
+        "required": [
+          "platforms",
+          "metric",
+          "start_date",
+          "end_date"
+        ],
+        "title": "AggregateQuery",
+        "type": "object"
+      },
+      "CardColor": {
+        "enum": [
+          "ALL",
+          "GREEN",
+          "YELLOW",
+          "RED"
+        ],
+        "title": "CardColor",
+        "type": "string"
+      },
+      "CategoryFilter": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "platform": {
+            "$ref": "#/components/schemas/Platform"
+          }
+        },
+        "required": [
+          "platform",
+          "name"
+        ],
+        "title": "CategoryFilter",
+        "type": "object"
+      },
+      "ClientDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Api Version",
+            "type": "integer"
+          },
+          "app_id": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_.]{2,149}$",
+            "title": "App Id",
+            "type": "string"
+          },
+          "app_version": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "App Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "app_version"
+        ],
+        "title": "ClientDescriptor",
+        "type": "object"
+      },
+      "Criterion": {
+        "enum": [
+          "RECOLHA",
+          "KM",
+          "HORA",
+          "VIAGEM_LONGA",
+          "VALOR_MINIMO"
+        ],
+        "title": "Criterion",
+        "type": "string"
+      },
+      "CriterionDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "criterion": {
+            "$ref": "#/components/schemas/Criterion"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/Decision"
+          }
+        },
+        "required": [
+          "criterion",
+          "decision"
+        ],
+        "title": "CriterionDecision",
+        "type": "object"
+      },
+      "DailyAggregate": {
+        "additionalProperties": false,
+        "properties": {
+          "average_cents": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Cents"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "event_count": {
+            "minimum": 0.0,
+            "title": "Event Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "date",
+          "event_count"
+        ],
+        "title": "DailyAggregate",
+        "type": "object"
+      },
+      "Decision": {
+        "enum": [
+          "ACEITAR",
+          "ANALISAR",
+          "REJEITAR"
+        ],
+        "title": "Decision",
+        "type": "string"
+      },
+      "EcPublicJwk": {
+        "additionalProperties": false,
+        "properties": {
+          "crv": {
+            "const": "P-256",
+            "title": "Crv",
+            "type": "string"
+          },
+          "kty": {
+            "const": "EC",
+            "title": "Kty",
+            "type": "string"
+          },
+          "x": {
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "title": "X",
+            "type": "string"
+          },
+          "y": {
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "title": "Y",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kty",
+          "crv",
+          "x",
+          "y"
+        ],
+        "title": "EcPublicJwk",
+        "type": "object"
+      },
+      "ErrorBody": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "server_time": {
+            "minimum": 0.0,
+            "title": "Server Time",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "request_id",
+          "server_time"
+        ],
+        "title": "ErrorBody",
+        "type": "object"
+      },
+      "ErrorEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ErrorEnvelope",
+        "type": "object"
+      },
+      "EventResult": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "event_id": {
+            "format": "uuid",
+            "title": "Event Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/EventStatus"
+          }
+        },
+        "required": [
+          "event_id",
+          "status"
+        ],
+        "title": "EventResult",
+        "type": "object"
+      },
+      "EventStatus": {
+        "enum": [
+          "ACCEPTED",
+          "DUPLICATE",
+          "REJECTED"
+        ],
+        "title": "EventStatus",
+        "type": "string"
+      },
+      "GlobalAggregates": {
+        "additionalProperties": false,
+        "properties": {
+          "daily_calendar": {
+            "items": {
+              "$ref": "#/components/schemas/DailyAggregate"
+            },
+            "maxItems": 30,
+            "title": "Daily Calendar",
+            "type": "array"
+          },
+          "generated_at": {
+            "description": "Unix epoch seconds",
+            "minimum": 0.0,
+            "title": "Generated At",
+            "type": "integer"
+          },
+          "heatmap": {
+            "items": {
+              "$ref": "#/components/schemas/HeatmapAggregate"
+            },
+            "maxItems": 28,
+            "title": "Heatmap",
+            "type": "array"
+          },
+          "pickup_municipalities": {
+            "items": {
+              "$ref": "#/components/schemas/PickupMunicipalityAggregate"
+            },
+            "maxItems": 5,
+            "title": "Pickup Municipalities",
+            "type": "array"
+          },
+          "query": {
+            "$ref": "#/components/schemas/AggregateQuery"
+          },
+          "recorded_dates": {
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "maxItems": 366,
+            "title": "Recorded Dates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "query",
+          "pickup_municipalities",
+          "heatmap",
+          "daily_calendar",
+          "recorded_dates",
+          "generated_at"
+        ],
+        "title": "GlobalAggregates",
+        "type": "object"
+      },
+      "HeatmapAggregate": {
+        "additionalProperties": false,
+        "properties": {
+          "day_of_week": {
+            "enum": [
+              "MONDAY",
+              "TUESDAY",
+              "WEDNESDAY",
+              "THURSDAY",
+              "FRIDAY",
+              "SATURDAY",
+              "SUNDAY"
+            ],
+            "title": "Day Of Week",
+            "type": "string"
+          },
+          "event_count": {
+            "minimum": 0.0,
+            "title": "Event Count",
+            "type": "integer"
+          },
+          "median_cents": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Cents"
+          },
+          "shift": {
+            "enum": [
+              "MORNING",
+              "AFTERNOON",
+              "NIGHT",
+              "DAWN"
+            ],
+            "title": "Shift",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day_of_week",
+          "shift",
+          "event_count"
+        ],
+        "title": "HeatmapAggregate",
+        "type": "object"
+      },
+      "Metric": {
+        "enum": [
+          "VALUE_PER_KM",
+          "VALUE_PER_HOUR",
+          "TRIP_VALUE",
+          "NET_TRIP_VALUE"
+        ],
+        "title": "Metric",
+        "type": "string"
+      },
+      "OfferEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "active_criteria": {
+            "items": {
+              "$ref": "#/components/schemas/Criterion"
+            },
+            "maxItems": 5,
+            "title": "Active Criteria",
+            "type": "array"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "criterion_decisions": {
+            "items": {
+              "$ref": "#/components/schemas/CriterionDecision"
+            },
+            "maxItems": 5,
+            "title": "Criterion Decisions",
+            "type": "array"
+          },
+          "current_latitude_microdegrees": {
+            "anyOf": [
+              {
+                "maximum": 90000000.0,
+                "minimum": -90000000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Latitude Microdegrees"
+          },
+          "current_location_address": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Location Address"
+          },
+          "current_longitude_microdegrees": {
+            "anyOf": [
+              {
+                "maximum": 180000000.0,
+                "minimum": -180000000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Longitude Microdegrees"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/Decision"
+          },
+          "destination_address": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Address"
+          },
+          "destination_distance_meters": {
+            "anyOf": [
+              {
+                "maximum": 2000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Distance Meters"
+          },
+          "destination_duration_seconds": {
+            "anyOf": [
+              {
+                "maximum": 172800.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Duration Seconds"
+          },
+          "event_id": {
+            "format": "uuid",
+            "title": "Event Id",
+            "type": "string"
+          },
+          "gross_value_per_km_cents": {
+            "maximum": 1000000.0,
+            "minimum": 0.0,
+            "title": "Gross Value Per Km Cents",
+            "type": "integer"
+          },
+          "net_trip_value_cents": {
+            "anyOf": [
+              {
+                "maximum": 10000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Trip Value Cents"
+          },
+          "pickup_address": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pickup Address"
+          },
+          "pickup_distance_meters": {
+            "anyOf": [
+              {
+                "maximum": 2000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pickup Distance Meters"
+          },
+          "pickup_duration_seconds": {
+            "anyOf": [
+              {
+                "maximum": 172800.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pickup Duration Seconds"
+          },
+          "pickup_municipality": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pickup Municipality"
+          },
+          "platform": {
+            "$ref": "#/components/schemas/Platform"
+          },
+          "recorded_at_epoch_ms": {
+            "minimum": 0.0,
+            "title": "Recorded At Epoch Ms",
+            "type": "integer"
+          },
+          "stop_rejection": {
+            "default": false,
+            "title": "Stop Rejection",
+            "type": "boolean"
+          },
+          "toll_amount_cents": {
+            "default": 0,
+            "maximum": 1000000.0,
+            "minimum": 0.0,
+            "title": "Toll Amount Cents",
+            "type": "integer"
+          },
+          "trip_value_cents": {
+            "maximum": 10000000.0,
+            "minimum": 0.0,
+            "title": "Trip Value Cents",
+            "type": "integer"
+          },
+          "value_per_hour_cents": {
+            "maximum": 10000000.0,
+            "minimum": 0.0,
+            "title": "Value Per Hour Cents",
+            "type": "integer"
+          },
+          "value_per_km_cents": {
+            "maximum": 1000000.0,
+            "minimum": 0.0,
+            "title": "Value Per Km Cents",
+            "type": "integer"
+          },
+          "vehicle_cost_applied": {
+            "default": false,
+            "title": "Vehicle Cost Applied",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "event_id",
+          "recorded_at_epoch_ms",
+          "platform",
+          "decision",
+          "trip_value_cents",
+          "value_per_km_cents",
+          "gross_value_per_km_cents",
+          "value_per_hour_cents"
+        ],
+        "title": "OfferEvent",
+        "type": "object"
+      },
+      "OwnChange": {
+        "additionalProperties": false,
+        "properties": {
+          "event": {
+            "$ref": "#/components/schemas/OfferEvent"
+          },
+          "operation": {
+            "const": "UPSERT",
+            "default": "UPSERT",
+            "title": "Operation",
+            "type": "string"
+          },
+          "sequence": {
+            "minimum": 1.0,
+            "title": "Sequence",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sequence",
+          "event"
+        ],
+        "title": "OwnChange",
+        "type": "object"
+      },
+      "PickupMunicipalityAggregate": {
+        "additionalProperties": false,
+        "properties": {
+          "event_count": {
+            "minimum": 1.0,
+            "title": "Event Count",
+            "type": "integer"
+          },
+          "median_cents": {
+            "minimum": 0.0,
+            "title": "Median Cents",
+            "type": "integer"
+          },
+          "municipality": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Municipality",
+            "type": "string"
+          }
+        },
+        "required": [
+          "municipality",
+          "median_cents",
+          "event_count"
+        ],
+        "title": "PickupMunicipalityAggregate",
+        "type": "object"
+      },
+      "Platform": {
+        "enum": [
+          "UBER",
+          "BOLT"
+        ],
+        "title": "Platform",
+        "type": "string"
+      },
+      "RegistrationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "activation_key": {
+            "maxLength": 4096,
+            "minLength": 20,
+            "title": "Activation Key",
+            "type": "string"
+          },
+          "client": {
+            "$ref": "#/components/schemas/ClientDescriptor"
+          },
+          "device_public_key": {
+            "$ref": "#/components/schemas/EcPublicJwk"
+          }
+        },
+        "required": [
+          "activation_key",
+          "device_public_key",
+          "client"
+        ],
+        "title": "RegistrationRequest",
+        "type": "object"
+      },
+      "RegistrationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "installation_id": {
+            "format": "uuid",
+            "title": "Installation Id",
+            "type": "string"
+          },
+          "policy_version": {
+            "minimum": 1.0,
+            "title": "Policy Version",
+            "type": "integer"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "server_time": {
+            "description": "Unix epoch seconds",
+            "minimum": 0.0,
+            "title": "Server Time",
+            "type": "integer"
+          },
+          "sync_policy": {
+            "$ref": "#/components/schemas/SyncPolicy"
+          }
+        },
+        "required": [
+          "installation_id",
+          "role",
+          "policy_version",
+          "server_time",
+          "sync_policy"
+        ],
+        "title": "RegistrationResponse",
+        "type": "object"
+      },
+      "Role": {
+        "enum": [
+          "CLIENT",
+          "ADMIN"
+        ],
+        "title": "Role",
+        "type": "string"
+      },
+      "Shift": {
+        "enum": [
+          "ALL",
+          "MORNING",
+          "AFTERNOON",
+          "NIGHT",
+          "DAWN"
+        ],
+        "title": "Shift",
+        "type": "string"
+      },
+      "SyncPolicy": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor_retention_seconds": {
+            "title": "Cursor Retention Seconds",
+            "type": "integer"
+          },
+          "max_event_future_skew_seconds": {
+            "title": "Max Event Future Skew Seconds",
+            "type": "integer"
+          },
+          "max_events_per_sync": {
+            "title": "Max Events Per Sync",
+            "type": "integer"
+          },
+          "max_request_bytes": {
+            "title": "Max Request Bytes",
+            "type": "integer"
+          },
+          "nonce_retention_seconds": {
+            "title": "Nonce Retention Seconds",
+            "type": "integer"
+          },
+          "own_changes_page_size": {
+            "title": "Own Changes Page Size",
+            "type": "integer"
+          },
+          "request_idempotency_retention_seconds": {
+            "title": "Request Idempotency Retention Seconds",
+            "type": "integer"
+          },
+          "sync_burst": {
+            "title": "Sync Burst",
+            "type": "integer"
+          },
+          "sync_requests_per_minute": {
+            "title": "Sync Requests Per Minute",
+            "type": "integer"
+          },
+          "timestamp_skew_seconds": {
+            "title": "Timestamp Skew Seconds",
+            "type": "integer"
+          },
+          "worker_attempts_per_run": {
+            "title": "Worker Attempts Per Run",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max_events_per_sync",
+          "max_request_bytes",
+          "timestamp_skew_seconds",
+          "nonce_retention_seconds",
+          "request_idempotency_retention_seconds",
+          "cursor_retention_seconds",
+          "own_changes_page_size",
+          "sync_requests_per_minute",
+          "sync_burst",
+          "worker_attempts_per_run",
+          "max_event_future_skew_seconds"
+        ],
+        "title": "SyncPolicy",
+        "type": "object"
+      },
+      "SyncRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "aggregate_query": {
+            "$ref": "#/components/schemas/AggregateQuery"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/OfferEvent"
+            },
+            "maxItems": 100,
+            "title": "Events",
+            "type": "array"
+          }
+        },
+        "required": [
+          "aggregate_query"
+        ],
+        "title": "SyncRequest",
+        "type": "object"
+      },
+      "SyncResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "aggregate_version": {
+            "minimum": 1.0,
+            "title": "Aggregate Version",
+            "type": "integer"
+          },
+          "event_results": {
+            "items": {
+              "$ref": "#/components/schemas/EventResult"
+            },
+            "title": "Event Results",
+            "type": "array"
+          },
+          "global_aggregates": {
+            "$ref": "#/components/schemas/GlobalAggregates"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "title": "Next Cursor",
+            "type": "string"
+          },
+          "own_changes": {
+            "items": {
+              "$ref": "#/components/schemas/OwnChange"
+            },
+            "title": "Own Changes",
+            "type": "array"
+          },
+          "policy_version": {
+            "minimum": 1.0,
+            "title": "Policy Version",
+            "type": "integer"
+          },
+          "server_time": {
+            "description": "Unix epoch seconds",
+            "minimum": 0.0,
+            "title": "Server Time",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "event_results",
+          "own_changes",
+          "next_cursor",
+          "has_more",
+          "global_aggregates",
+          "aggregate_version",
+          "policy_version",
+          "server_time"
+        ],
+        "title": "SyncResponse",
+        "type": "object"
+      },
+      "ValueMode": {
+        "enum": [
+          "FREE",
+          "GROSS"
+        ],
+        "title": "ValueMode",
+        "type": "string"
+      }
+    }
+  },
+  "info": {
+    "description": "Contract-only specification for TVDE Insight API v1. The executable harness uses only in-memory fakes and contains no Google or production integration.",
+    "title": "TVDE Insight Secure Sync Contract Harness",
+    "version": "1.0.0-contract"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/installations/register": {
+      "post": {
+        "operationId": "register_v1_installations_register_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-TVDE-Key-Id",
+            "required": true,
+            "schema": {
+              "title": "X-Tvde-Key-Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-TVDE-Timestamp",
+            "required": true,
+            "schema": {
+              "title": "X-Tvde-Timestamp",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-TVDE-Nonce",
+            "required": true,
+            "schema": {
+              "title": "X-Tvde-Nonce",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-TVDE-Body-SHA256",
+            "required": true,
+            "schema": {
+              "title": "X-Tvde-Body-Sha256",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-TVDE-Signature",
+            "required": true,
+            "schema": {
+              "title": "X-Tvde-Signature",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegistrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication failed"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "License or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Installation not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Replay, binding or idempotency conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Cursor expired"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Payload too large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Contract validation failed"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limited"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Internal failure"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Upstream failure"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Temporarily unavailable"
+          }
+        },
+        "summary": "Register"
+      }
+    },
+    "/v1/sync": {
+      "post": {
+        "operationId": "sync_v1_sync_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-TVDE-Installation-Id",
+            "required": true,
+            "schema": {
+              "title": "X-Tvde-Installation-Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-TVDE-Timestamp",
+            "required": true,
+            "schema": {
+              "title": "X-Tvde-Timestamp",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-TVDE-Nonce",
+            "required": true,
+            "schema": {
+              "title": "X-Tvde-Nonce",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-TVDE-Body-SHA256",
+            "required": true,
+            "schema": {
+              "title": "X-Tvde-Body-Sha256",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-TVDE-Signature",
+            "required": true,
+            "schema": {
+              "title": "X-Tvde-Signature",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication failed"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "License or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Installation not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Replay, binding or idempotency conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Cursor expired"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Payload too large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Contract validation failed"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limited"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Internal failure"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Upstream failure"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Temporarily unavailable"
+          }
+        },
+        "summary": "Sync"
+      }
+    }
+  },
+  "x-tvde-signature-protocol": {
+    "algorithm": "ECDSA P-256 with SHA-256",
+    "bodyHash": "base64url without padding of SHA-256 over exact transmitted body bytes",
+    "canonicalUtf8": "TVDE1\\n{METHOD}\\n{PATH}\\n{PRINCIPAL}\\n{TIMESTAMP}\\n{NONCE}\\n{IDEMPOTENCY_KEY}\\n{BODY_SHA256}\\n",
+    "registrationPrincipal": "RFC 7638 thumbprint of device_public_key",
+    "signatureEncoding": "base64url without padding of ASN.1 DER ECDSA signature",
+    "signedPath": "Absolute path only; query and fragment are forbidden",
+    "syncPrincipal": "X-TVDE-Installation-Id"
+  }
+}

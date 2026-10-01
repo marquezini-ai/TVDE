@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tvde-insight-backend-contract"
+version = "0.1.0"
+description = "Isolated contract harness for the TVDE Insight secure sync API"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+    "cryptography>=45,<47",
+    "fastapi>=0.116,<1",
+    "pydantic>=2.11,<3",
+]
+
+[project.optional-dependencies]
+test = [
+    "httpx>=0.28,<1",
+    "openapi-spec-validator>=0.7.2,<1",
+    "pytest>=8.4,<10",
+    "pyyaml>=6,<7",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tvde_contract"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
