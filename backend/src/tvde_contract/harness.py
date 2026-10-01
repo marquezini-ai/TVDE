@@ -1,12 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-import re
 import secrets
-import threading
-import time
-from collections import defaultdict, deque
-from dataclasses import dataclass
+from collections import defaultdict
 from datetime import timedelta
 from typing import Callable
 from uuid import UUID, uuid4
@@ -31,12 +27,12 @@ from .errors import (
     LICENSE_INVALID,
     LICENSE_REVOKED,
     PAYLOAD_TOO_LARGE,
-    RATE_LIMITED,
     REPLAY_DETECTED,
     TIMESTAMP_OUT_OF_RANGE,
     VALIDATION_FAILED,
     ContractError,
 )
+from .domain import IdempotentResponse, Installation, LicenseRecord, StoredCursor
 from .limits import LIMITS, ContractLimits
 from .models import (
     DailyAggregate,
@@ -50,72 +46,31 @@ from .models import (
     RegistrationRequest,
     RegistrationResponse,
     Role,
-    SyncPolicy,
     SyncRequest,
     SyncResponse,
 )
 from .security import (
     SignedHeaders,
-    body_sha256,
     canonical_request,
     jwk_thumbprint,
     public_key_from_jwk,
     verify_request,
 )
+from .service_base import BackendServiceBase
 
 
-NONCE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{22,64}$")
-
-
-@dataclass
-class FakeLicense:
-    activation_key: str
-    role: Role = Role.CLIENT
-    expires_at: int | None = None
-    revoked: bool = False
-
-
-@dataclass
-class Installation:
-    installation_id: UUID
-    owner_id: str
-    activation_key: str
-    public_key: ec.EllipticCurvePublicKey
-    key_thumbprint: str
-    role: Role
-    revoked: bool = False
-
-
-@dataclass
-class IdempotentResponse:
-    body_hash: str
-    status: int
-    body: dict
-    expires_at: int
-
-
-@dataclass
-class StoredCursor:
-    owner_id: str
-    sequence: int
-    expires_at: int
-
-
-class ContractHarness:
+class ContractHarness(BackendServiceBase):
     """In-memory executable specification. It is not a production backend."""
 
     def __init__(self, *, clock: Callable[[], int] | None = None, limits: ContractLimits = LIMITS):
-        self.clock = clock or (lambda: int(time.time()))
-        self.limits = limits
-        self.licenses: dict[str, FakeLicense] = {}
+        super().__init__(clock=clock, limits=limits)
+        self.licenses: dict[str, LicenseRecord] = {}
         self.installations: dict[UUID, Installation] = {}
         self.installation_by_license: dict[str, UUID] = {}
         self.nonces: dict[tuple[str, str], int] = {}
         self.idempotency: dict[tuple[str, str, str], IdempotentResponse] = {}
         self.events: dict[str, dict[UUID, tuple[str, OfferEvent, int]]] = defaultdict(dict)
         self.cursors: dict[str, StoredCursor] = {}
-        self.rate_windows: dict[tuple[str, str], deque[int]] = defaultdict(deque)
-        self.lock = threading.RLock()
 
     def add_license(
         self,
@@ -125,55 +80,23 @@ class ContractHarness:
         expires_at: int | None = None,
         revoked: bool = False,
     ) -> None:
-        self.licenses[activation_key] = FakeLicense(activation_key, role, expires_at, revoked)
+        self.licenses[activation_key] = LicenseRecord(activation_key, role, expires_at, revoked)
 
     def revoke_installation(self, installation_id: UUID) -> None:
         self.installations[installation_id].revoked = True
 
+    def get_installation(self, installation_id: UUID) -> Installation | None:
+        return self.installations.get(installation_id)
+
+    def validate_installation_license(self, installation: Installation) -> None:
+        license_record = self.licenses[installation.activation_key]
+        if license_record.revoked:
+            raise LICENSE_REVOKED()
+        if license_record.expires_at is not None and license_record.expires_at < self.clock():
+            raise LICENSE_EXPIRED()
+
     def expire_cursor(self, cursor: str) -> None:
         self.cursors[cursor].expires_at = self.clock() - 1
-
-    def policy(self) -> SyncPolicy:
-        return SyncPolicy(
-            max_events_per_sync=self.limits.max_events_per_sync,
-            max_request_bytes=self.limits.max_request_bytes,
-            timestamp_skew_seconds=self.limits.timestamp_skew_seconds,
-            nonce_retention_seconds=self.limits.nonce_retention_seconds,
-            request_idempotency_retention_seconds=self.limits.request_idempotency_retention_seconds,
-            cursor_retention_seconds=self.limits.cursor_retention_seconds,
-            own_changes_page_size=self.limits.own_changes_page_size,
-            sync_requests_per_minute=self.limits.sync_requests_per_minute,
-            sync_burst=self.limits.sync_burst,
-            worker_attempts_per_run=self.limits.worker_attempts_per_run,
-            max_event_future_skew_seconds=self.limits.max_event_future_skew_seconds,
-        )
-
-    def rate_limit(self, scope: str, principal: str, *, maximum: int, window_seconds: int) -> None:
-        with self.lock:
-            now = self.clock()
-            entries = self.rate_windows[(scope, principal)]
-            while entries and entries[0] <= now - window_seconds:
-                entries.popleft()
-            if len(entries) >= maximum:
-                raise RATE_LIMITED(window_seconds)
-            entries.append(now)
-
-    def signed_headers(self, request: Request, body: bytes) -> SignedHeaders:
-        try:
-            timestamp = int(request.headers["X-TVDE-Timestamp"])
-            nonce = request.headers["X-TVDE-Nonce"]
-            idempotency_key = request.headers["Idempotency-Key"]
-            supplied_hash = request.headers["X-TVDE-Body-SHA256"]
-            signature = request.headers["X-TVDE-Signature"]
-            UUID(idempotency_key)
-        except (KeyError, TypeError, ValueError):
-            raise INVALID_REQUEST()
-        if not NONCE_PATTERN.fullmatch(nonce):
-            raise INVALID_REQUEST()
-        calculated_hash = body_sha256(body)
-        if supplied_hash != calculated_hash:
-            raise INVALID_SIGNATURE()
-        return SignedHeaders(timestamp, nonce, idempotency_key, supplied_hash, signature)
 
     def authenticate(
         self,
@@ -270,6 +193,21 @@ class ContractHarness:
             sync_policy=self.policy(),
         )
 
+    def execute_register(
+        self,
+        payload: RegistrationRequest,
+        key_thumbprint: str,
+        headers: SignedHeaders,
+    ) -> tuple[int, dict]:
+        with self.lock:
+            remembered = self.idempotent_result("register", key_thumbprint, headers)
+            if remembered is not None:
+                return remembered.status, remembered.body
+            response = self.register(payload, key_thumbprint)
+            content = response.model_dump(mode="json")
+            self.remember_response("register", key_thumbprint, headers, 200, content)
+            return 200, content
+
     def sync(self, installation: Installation, payload: SyncRequest) -> SyncResponse:
         now = self.clock()
         event_results: list[EventResult] = []
@@ -322,6 +260,22 @@ class ContractHarness:
             server_time=now,
         )
 
+    def execute_sync(
+        self,
+        installation: Installation,
+        payload: SyncRequest,
+        headers: SignedHeaders,
+    ) -> tuple[int, dict]:
+        principal = str(installation.installation_id)
+        with self.lock:
+            remembered = self.idempotent_result("sync", principal, headers)
+            if remembered is not None:
+                return remembered.status, remembered.body
+            response = self.sync(installation, payload)
+            content = response.model_dump(mode="json")
+            self.remember_response("sync", principal, headers, 200, content)
+            return 200, content
+
     def _cursor_sequence(self, cursor: str | None, owner_id: str) -> int:
         if cursor is None:
             return 0
@@ -368,9 +322,12 @@ class ContractHarness:
 
 
 def create_contract_app(
-    *, clock: Callable[[], int] | None = None, limits: ContractLimits = LIMITS
+    *,
+    clock: Callable[[], int] | None = None,
+    limits: ContractLimits = LIMITS,
+    backend: BackendServiceBase | None = None,
 ) -> FastAPI:
-    harness = ContractHarness(clock=clock, limits=limits)
+    harness = backend or ContractHarness(clock=clock, limits=limits)
     app = FastAPI(
         title="TVDE Insight Secure Sync Contract Harness",
         version="1.0.0-contract",
@@ -483,14 +440,8 @@ def create_contract_app(
             maximum=harness.limits.registration_attempts_per_15_minutes,
             window_seconds=15 * 60,
         )
-        with harness.lock:
-            remembered = harness.idempotent_result("register", key_thumbprint, headers)
-            if remembered is not None:
-                return JSONResponse(status_code=remembered.status, content=remembered.body)
-            response = harness.register(payload, key_thumbprint)
-            content = response.model_dump(mode="json")
-            harness.remember_response("register", key_thumbprint, headers, 200, content)
-        return JSONResponse(status_code=200, content=content)
+        status, content = harness.execute_register(payload, key_thumbprint, headers)
+        return JSONResponse(status_code=status, content=content)
 
     @app.post("/v1/sync", response_model=SyncResponse, responses=error_responses)
     async def sync(
@@ -508,16 +459,12 @@ def create_contract_app(
             installation_id = UUID(x_tvde_installation_id)
         except ValueError:
             raise INSTALLATION_NOT_FOUND()
-        installation = harness.installations.get(installation_id)
+        installation = harness.get_installation(installation_id)
         if installation is None:
             raise INSTALLATION_NOT_FOUND()
         if installation.revoked:
             raise INSTALLATION_REVOKED()
-        license_record = harness.licenses[installation.activation_key]
-        if license_record.revoked:
-            raise LICENSE_REVOKED()
-        if license_record.expires_at is not None and license_record.expires_at < harness.clock():
-            raise LICENSE_EXPIRED()
+        harness.validate_installation_license(installation)
         headers = harness.signed_headers(request, body)
         harness.authenticate(
             request=request,
@@ -532,13 +479,7 @@ def create_contract_app(
             maximum=harness.limits.sync_requests_per_minute,
             window_seconds=60,
         )
-        with harness.lock:
-            remembered = harness.idempotent_result("sync", str(installation_id), headers)
-            if remembered is not None:
-                return JSONResponse(status_code=remembered.status, content=remembered.body)
-            response = harness.sync(installation, payload)
-            content = response.model_dump(mode="json")
-            harness.remember_response("sync", str(installation_id), headers, 200, content)
-        return JSONResponse(status_code=200, content=content)
+        status, content = harness.execute_sync(installation, payload, headers)
+        return JSONResponse(status_code=status, content=content)
 
     return app

@@ -11,6 +11,8 @@ dependencies = [
     "cryptography>=45,<47",
     "fastapi>=0.116,<1",
     "pydantic>=2.11,<3",
+    "tzdata>=2025.2,<2027",
+    "uvicorn>=0.35,<1",
 ]
 
 [project.optional-dependencies]

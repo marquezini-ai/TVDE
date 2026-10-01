@@ -49,3 +49,17 @@ The automated suite is the executable subset of this matrix. External-service ca
 - Cloud Run request-size and timeout behavior;
 - Android Keystore interoperability vector;
 - physical offline/recovery tests on S10 and S25.
+
+## Phase 3B.2 persistent local backend
+
+- empty database migration, repeatable startup and incompatible future schema detection;
+- persistent registration, test license states and key binding;
+- persistent events, changes, cursor, nonce and idempotency across restart;
+- rollback before/during processing and immediately before commit;
+- exact recovery after commit and before HTTP response;
+- same event, same idempotency key, same nonce and different events under concurrency;
+- cursor pagination, owner binding, expiry, new changes and restart;
+- global aggregates calculated from persisted events without foreign raw rows;
+- projection success, unavailability, retry, restart and exactly-once outbox identity;
+- recovery after crash in `PROCESSING` and after external projection;
+- environment validation and structured-log redaction.
