@@ -3,6 +3,8 @@ package com.daniel.tvdeinsight.data.repository
 import android.content.Context
 import com.daniel.tvdeinsight.data.local.AppDatabase
 import com.daniel.tvdeinsight.data.local.TripEntityMapper
+import com.daniel.tvdeinsight.data.local.OutboxEventIds
+import com.daniel.tvdeinsight.data.local.toPendingOutbox
 import com.daniel.tvdeinsight.data.location.DeviceLocationProvider
 import com.daniel.tvdeinsight.data.identity.DeviceIdentity
 import com.daniel.tvdeinsight.domain.model.OfferHistoryEntry
@@ -53,17 +55,19 @@ class RoomOfferAnalysisStore @Inject constructor(
     init {
         scope.launch {
             val migrationPreferences = context.getSharedPreferences(MIGRATION_PREFERENCES, Context.MODE_PRIVATE)
-            if (migrationPreferences.getBoolean(KEY_LEGACY_MIGRATION_COMPLETE, false)) return@launch
-            val legacyEntries = legacyStore.get().readPersistedHistory()
-            if (legacyEntries.isNotEmpty()) {
-                // A startup migration must never replace newer Room rows or their screenshot links.
-                val entities = legacyEntries.map {
-                    TripEntityMapper.fromDomain(it.copy(sourceDeviceId = deviceIdentity.sourceId))
+            if (!migrationPreferences.getBoolean(KEY_LEGACY_MIGRATION_COMPLETE, false)) {
+                val legacyEntries = legacyStore.get().readPersistedHistory()
+                if (legacyEntries.isNotEmpty()) {
+                    // A startup migration must never replace newer Room rows or their screenshot links.
+                    val entities = legacyEntries.map {
+                        TripEntityMapper.fromDomain(it.copy(sourceDeviceId = deviceIdentity.sourceId))
+                    }
+                    database.tripDao().insertIgnoreAll(entities)
+                    AppLogger.info("Migração concluída: ${legacyEntries.size} ofertas do DataStore para Room")
                 }
-                database.tripDao().insertIgnoreAll(entities)
-                AppLogger.info("Migração concluída: ${legacyEntries.size} ofertas do DataStore para Room")
+                migrationPreferences.edit().putBoolean(KEY_LEGACY_MIGRATION_COMPLETE, true).apply()
             }
-            migrationPreferences.edit().putBoolean(KEY_LEGACY_MIGRATION_COMPLETE, true).apply()
+            database.tripDao().backfillOwnOutbox(deviceIdentity.sourceId)
         }
     }
 
@@ -82,7 +86,15 @@ class RoomOfferAnalysisStore @Inject constructor(
             ).copy(sourceDeviceId = deviceIdentity.sourceId)
             writeMutex.withLock {
                 val entryWithScreenshot = entry.copy(screenshotFileName = pendingScreenshotFiles.remove(entryId))
-                val inserted = database.tripDao().insertIgnore(TripEntityMapper.fromDomain(entryWithScreenshot))
+                val entity = TripEntityMapper.fromDomain(entryWithScreenshot)
+                val inserted = if (entity.platform == "UBER" || entity.platform == "BOLT") {
+                    database.tripDao().insertLocalWithOutbox(
+                        entity,
+                        entity.toPendingOutbox(OutboxEventIds.newId(), entryWithScreenshot.recordedAtMillis)
+                    )
+                } else {
+                    database.tripDao().insertIgnore(entity)
+                }
                 if (inserted == -1L) {
                     AppLogger.debug("Oferta duplicada ignorada no Room: plataforma=${entryWithScreenshot.platform}")
                 }

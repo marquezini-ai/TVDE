@@ -27,6 +27,36 @@ interface TripDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIgnoreAll(entities: List<TripEntity>): List<Long>
 
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertOutbox(entity: SyncOutboxEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertOutboxIgnore(entities: List<SyncOutboxEntity>)
+
+    @Transaction
+    suspend fun insertLocalWithOutbox(entity: TripEntity, outbox: SyncOutboxEntity): Long {
+        val inserted = insertIgnore(entity)
+        if (inserted != -1L) insertOutbox(outbox)
+        return inserted
+    }
+
+    @Query(
+        "SELECT * FROM trip_history WHERE sourceDeviceId = :sourceDeviceId " +
+            "AND platform IN ('UBER', 'BOLT') AND NOT EXISTS (" +
+            "SELECT 1 FROM sync_outbox WHERE sync_outbox.sourceDeviceId = trip_history.sourceDeviceId " +
+            "AND sync_outbox.tripId = trip_history.id)"
+    )
+    suspend fun ownTripsMissingOutbox(sourceDeviceId: String): List<TripEntity>
+
+    @Transaction
+    suspend fun backfillOwnOutbox(sourceDeviceId: String) {
+        val now = System.currentTimeMillis()
+        val outbox = ownTripsMissingOutbox(sourceDeviceId).map { trip ->
+            trip.toPendingOutbox(OutboxEventIds.migratedId(trip.sourceDeviceId, trip.id), now)
+        }
+        if (outbox.isNotEmpty()) insertOutboxIgnore(outbox)
+    }
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun replaceEntity(entity: TripEntity)
 
