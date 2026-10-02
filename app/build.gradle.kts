@@ -10,6 +10,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.hilt)
     alias(libs.plugins.ksp)
 }
@@ -62,6 +63,11 @@ android {
         versionName = "0.5.69-unified"
 
         buildConfigField("String", "GOOGLE_SHEETS_SPREADSHEET_ID", sheetsSpreadsheetId.asBuildConfigString())
+        buildConfigField(
+            "String",
+            "BACKEND_BASE_URL",
+            "https://tvde-backend-test-api-ad7wubyn2a-no.a.run.app".asBuildConfigString()
+        )
         buildConfigField(
             "String",
             "GOOGLE_SERVICE_ACCOUNT_ASSET",
@@ -134,6 +140,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.security.crypto)
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.androidx.hilt.navigation.compose)
