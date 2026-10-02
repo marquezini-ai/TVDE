@@ -5,6 +5,8 @@ import com.daniel.tvdeinsight.data.local.TripEntityMapper
 import com.daniel.tvdeinsight.data.identity.DeviceIdentity
 import com.daniel.tvdeinsight.data.sheets.GoogleSheetsClient
 import com.daniel.tvdeinsight.data.sheets.TripSheetCodec
+import com.daniel.tvdeinsight.data.sync.SyncGateway
+import com.daniel.tvdeinsight.data.sync.SyncGatewayResult
 import com.daniel.tvdeinsight.logging.AppLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -18,7 +20,7 @@ class TripSyncRepository @Inject constructor(
     private val database: AppDatabase,
     private val sheetsClient: GoogleSheetsClient,
     private val deviceIdentity: DeviceIdentity
-) {
+) : SyncGateway {
     private val syncMutex = Mutex()
 
     suspend fun uploadPending(): Boolean = syncMutex.withLock {
@@ -73,10 +75,11 @@ class TripSyncRepository @Inject constructor(
         }
     }
 
-    suspend fun sync(): Boolean = withContext(Dispatchers.IO) {
+    override suspend fun synchronize(): SyncGatewayResult = withContext(Dispatchers.IO) {
+        if (!sheetsClient.isConfigured) return@withContext SyncGatewayResult.NotConfigured
         uploadPending()
         downloadAll()
-        true
+        SyncGatewayResult.Completed
     }
 
     private fun syncKey(entry: com.daniel.tvdeinsight.domain.model.OfferHistoryEntry): String =
