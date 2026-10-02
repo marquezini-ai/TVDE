@@ -167,6 +167,8 @@ dependencies {
     implementation("androidx.media3:media3-common:1.9.0")
 
     testImplementation(libs.junit)
+    testImplementation("androidx.test:core-ktx:1.6.1")
+    testImplementation("org.robolectric:robolectric:4.14.1")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test:core-ktx:1.6.1")
