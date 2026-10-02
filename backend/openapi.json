@@ -116,6 +116,72 @@
         "title": "ClientDescriptor",
         "type": "object"
       },
+      "ClientLicenseIssueRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "android_id": {
+            "pattern": "^[a-f0-9]{8,64}$",
+            "title": "Android Id",
+            "type": "string"
+          },
+          "expires_at_epoch_ms": {
+            "exclusiveMinimum": 0.0,
+            "title": "Expires At Epoch Ms",
+            "type": "integer"
+          },
+          "license_type": {
+            "const": "CUSTOM",
+            "default": "CUSTOM",
+            "title": "License Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "android_id",
+          "expires_at_epoch_ms"
+        ],
+        "title": "ClientLicenseIssueRequest",
+        "type": "object"
+      },
+      "ClientLicenseIssueResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "activation_key": {
+            "maxLength": 4096,
+            "minLength": 20,
+            "title": "Activation Key",
+            "type": "string"
+          },
+          "android_id": {
+            "title": "Android Id",
+            "type": "string"
+          },
+          "expires_at_epoch_ms": {
+            "exclusiveMinimum": 0.0,
+            "title": "Expires At Epoch Ms",
+            "type": "integer"
+          },
+          "license_type": {
+            "const": "CUSTOM",
+            "default": "CUSTOM",
+            "title": "License Type",
+            "type": "string"
+          },
+          "server_time": {
+            "minimum": 0.0,
+            "title": "Server Time",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "activation_key",
+          "android_id",
+          "expires_at_epoch_ms",
+          "server_time"
+        ],
+        "title": "ClientLicenseIssueResponse",
+        "type": "object"
+      },
       "Criterion": {
         "enum": [
           "RECOLHA",
@@ -984,6 +1050,210 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/v1/admin/client-licenses/issue": {
+      "post": {
+        "operationId": "issue_client_license_v1_admin_client_licenses_issue_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-TVDE-Installation-Id",
+            "required": true,
+            "schema": {
+              "title": "X-Tvde-Installation-Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-TVDE-Timestamp",
+            "required": true,
+            "schema": {
+              "title": "X-Tvde-Timestamp",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-TVDE-Nonce",
+            "required": true,
+            "schema": {
+              "title": "X-Tvde-Nonce",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-TVDE-Body-SHA256",
+            "required": true,
+            "schema": {
+              "title": "X-Tvde-Body-Sha256",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-TVDE-Signature",
+            "required": true,
+            "schema": {
+              "title": "X-Tvde-Signature",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientLicenseIssueRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientLicenseIssueResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Authentication failed"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "License or authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Installation not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Replay, binding or idempotency conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Cursor expired"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Payload too large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Contract validation failed"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Rate limited"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Internal failure"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Upstream failure"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Temporarily unavailable"
+          }
+        },
+        "summary": "Issue Client License"
+      }
+    },
     "/v1/installations/register": {
       "post": {
         "operationId": "register_v1_installations_register_post",

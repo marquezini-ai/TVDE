@@ -16,6 +16,7 @@ class BackendSettings:
     timezone: str = "Europe/Lisbon"
     projection_retry_seconds: int = 30
     projection_processing_timeout_seconds: int = 300
+    license_signing_private_key_base64: str | None = None
     limits: ContractLimits = LIMITS
 
     def __post_init__(self) -> None:
@@ -41,4 +42,5 @@ class BackendSettings:
             projection_processing_timeout_seconds=int(
                 os.getenv("TVDE_PROJECTION_PROCESSING_TIMEOUT_SECONDS", "300")
             ),
+            license_signing_private_key_base64=os.getenv("TVDE_LICENSE_SIGNING_PRIVATE_KEY_BASE64", "").strip() or None,
         )

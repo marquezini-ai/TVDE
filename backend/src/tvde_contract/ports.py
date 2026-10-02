@@ -9,7 +9,7 @@ from .models import AggregateQuery, GlobalAggregates, OfferEvent
 
 class LicenseRepository(Protocol):
     def put_license(
-        self, activation_key: str, role: str, expires_at: int | None, revoked: bool, now: int
+        self, activation_key: str, role: str, expires_at: int | None, revoked: bool, now: int, connection: object | None = None
     ) -> None: ...
     def get_license(self, activation_key: str) -> LicenseRecord | None: ...
 

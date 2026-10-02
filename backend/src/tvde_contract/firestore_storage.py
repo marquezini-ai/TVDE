@@ -168,17 +168,20 @@ class FirestoreStorage:
         expires_at: int | None,
         revoked: bool,
         now: int,
+        connection: FirestoreUnitOfWork | None = None,
     ) -> None:
-        self.client.collection("licenses").document(_license_id(activation_key)).set(
-            {
+        reference = self.client.collection("licenses").document(_license_id(activation_key))
+        data = {
                 "role": role,
                 "expires_at": expires_at,
                 "revoked": revoked,
                 "created_at": now,
                 "updated_at": now,
-            },
-            merge=True,
-        )
+            }
+        if connection is None:
+            reference.set(data, merge=True)
+        else:
+            connection.set(reference, data)
 
     def get_license(
         self, activation_key: str, connection: FirestoreUnitOfWork | None = None

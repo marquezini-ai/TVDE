@@ -111,6 +111,20 @@ class RegistrationResponse(StrictModel):
     sync_policy: SyncPolicy
 
 
+class ClientLicenseIssueRequest(StrictModel):
+    android_id: Annotated[str, StringConstraints(strip_whitespace=True, to_lower=True, pattern=r"^[a-f0-9]{8,64}$")]
+    expires_at_epoch_ms: int = Field(gt=0)
+    license_type: Literal["CUSTOM"] = "CUSTOM"
+
+
+class ClientLicenseIssueResponse(StrictModel):
+    activation_key: Annotated[str, StringConstraints(min_length=20, max_length=4096)]
+    android_id: str
+    expires_at_epoch_ms: int = Field(gt=0)
+    license_type: Literal["CUSTOM"] = "CUSTOM"
+    server_time: int = Field(ge=0)
+
+
 class CriterionDecision(StrictModel):
     criterion: Criterion
     decision: Decision

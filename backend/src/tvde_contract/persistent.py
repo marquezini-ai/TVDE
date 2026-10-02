@@ -31,6 +31,8 @@ from .harness import create_contract_app
 from .models import (
     EventResult,
     EventStatus,
+    ClientLicenseIssueRequest,
+    ClientLicenseIssueResponse,
     OfferEvent,
     OwnChange,
     RegistrationRequest,
@@ -43,6 +45,7 @@ from .security import SignedHeaders, canonical_request, public_key_from_jwk, ver
 from .sqlite_storage import SQLiteStorage
 from .structured_logging import configure_logging, log_event, safe_principal
 from .service_base import BackendServiceBase
+from .license_signing import issue_activation_key, load_license_private_key
 
 
 FailureInjector = Callable[[str], None]
@@ -64,6 +67,7 @@ class PersistentBackend(BackendServiceBase):
         self.storage = storage or SQLiteStorage(settings.database_path, settings.migrations_path)
         self.failure_injector = failure_injector or (lambda _: None)
         self.logger = logging.getLogger("tvde_backend.persistence")
+        self.license_signing_key = load_license_private_key(settings.license_signing_private_key_base64)
 
     def add_license(
         self,
@@ -325,6 +329,67 @@ class PersistentBackend(BackendServiceBase):
         )
         self.failure_injector("sync_before_response")
         return result
+
+    def execute_issue_client_license(
+        self,
+        installation: Installation,
+        payload: ClientLicenseIssueRequest,
+        headers: SignedHeaders,
+    ) -> tuple[int, dict]:
+        from .errors import ROLE_FORBIDDEN, SIGNING_UNAVAILABLE, VALIDATION_FAILED
+
+        if installation.role != Role.ADMIN:
+            raise ROLE_FORBIDDEN()
+        if self.license_signing_key is None:
+            raise SIGNING_UNAVAILABLE()
+        now = self.clock()
+        if payload.expires_at_epoch_ms <= now * 1000 or payload.expires_at_epoch_ms > (now + 3_650 * 86_400) * 1000:
+            raise VALIDATION_FAILED()
+        principal = str(installation.installation_id)
+
+        def operation(connection):
+            existing = self.storage.get_idempotency(
+                connection, "issue_client_license", principal, headers.idempotency_key, now
+            )
+            remembered = self._idempotent(existing, headers)
+            if remembered is not None:
+                return remembered
+            activation_key = issue_activation_key(
+                self.license_signing_key,
+                android_id=payload.android_id,
+                expires_at_epoch_ms=payload.expires_at_epoch_ms,
+                license_type=payload.license_type,
+            )
+            self.storage.put_license(
+                activation_key,
+                Role.CLIENT.value,
+                payload.expires_at_epoch_ms // 1000,
+                False,
+                now,
+                connection,
+            )
+            response = ClientLicenseIssueResponse(
+                activation_key=activation_key,
+                android_id=payload.android_id,
+                expires_at_epoch_ms=payload.expires_at_epoch_ms,
+                license_type=payload.license_type,
+                server_time=now,
+            )
+            content = response.model_dump(mode="json")
+            self.storage.insert_idempotency(
+                connection,
+                "issue_client_license",
+                principal,
+                headers.idempotency_key,
+                headers.body_hash,
+                200,
+                content,
+                now + self.limits.request_idempotency_retention_seconds,
+                now,
+            )
+            return 200, content
+
+        return self.storage.run_transaction(operation)
 
     def _persist_event(
         self,

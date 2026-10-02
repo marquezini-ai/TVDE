@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import secrets
+import base64
 from dataclasses import dataclass
 from datetime import date
 from uuid import uuid4
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives import serialization
 from fastapi.testclient import TestClient
 
 from tvde_contract.harness import create_contract_app
@@ -138,8 +140,22 @@ def clock() -> MutableClock:
 
 
 @pytest.fixture
-def app(clock: MutableClock):
-    instance = create_contract_app(clock=clock)
+def license_signing_key() -> ec.EllipticCurvePrivateKey:
+    return ec.generate_private_key(ec.SECP256R1())
+
+
+@pytest.fixture
+def app(clock: MutableClock, license_signing_key):
+    encoded = base64.b64encode(
+        license_signing_key.private_bytes(
+            serialization.Encoding.DER,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    ).decode("ascii")
+    from tvde_contract.harness import ContractHarness
+    harness = ContractHarness(clock=clock, license_signing_private_key_base64=encoded)
+    instance = create_contract_app(clock=clock, backend=harness)
     instance.state.harness.add_license(VALID_LICENSE)
     instance.state.harness.add_license(ADMIN_LICENSE, role=Role.ADMIN)
     return instance

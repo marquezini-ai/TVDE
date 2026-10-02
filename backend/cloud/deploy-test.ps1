@@ -17,6 +17,7 @@ gcloud run deploy $Service `
     --image $Image `
     --service-account $RuntimeIdentity `
     --set-env-vars "TVDE_BACKEND_ENV=cloud-test,GOOGLE_CLOUD_PROJECT=$ProjectId,TVDE_FIRESTORE_DATABASE=(default),TVDE_TIMEZONE=Europe/Lisbon,TVDE_LOG_LEVEL=INFO" `
+    --update-secrets "TVDE_LICENSE_SIGNING_PRIVATE_KEY_BASE64=tvde-client-license-signing-key:latest" `
     --memory 512Mi `
     --cpu 1 `
     --concurrency 20 `
@@ -26,4 +27,3 @@ gcloud run deploy $Service `
     --execution-environment gen2 `
     --ingress all `
     --allow-unauthenticated
-

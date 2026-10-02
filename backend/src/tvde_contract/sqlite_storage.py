@@ -71,9 +71,13 @@ class SQLiteStorage:
         expires_at: int | None,
         revoked: bool,
         now: int,
+        connection: sqlite3.Connection | None = None,
     ) -> None:
-        with self.transaction() as connection:
-            connection.execute(
+        if connection is None:
+            with self.transaction() as owned:
+                self.put_license(activation_key, role, expires_at, revoked, now, owned)
+            return
+        connection.execute(
                 """
                 INSERT INTO licenses(activation_key, role, expires_at, revoked, created_at)
                 VALUES (?, ?, ?, ?, ?)

@@ -28,6 +28,8 @@ from .errors import (
     LICENSE_REVOKED,
     PAYLOAD_TOO_LARGE,
     REPLAY_DETECTED,
+    ROLE_FORBIDDEN,
+    SIGNING_UNAVAILABLE,
     TIMESTAMP_OUT_OF_RANGE,
     VALIDATION_FAILED,
     ContractError,
@@ -36,6 +38,8 @@ from .domain import IdempotentResponse, Installation, LicenseRecord, StoredCurso
 from .limits import LIMITS, ContractLimits
 from .models import (
     DailyAggregate,
+    ClientLicenseIssueRequest,
+    ClientLicenseIssueResponse,
     EventResult,
     EventStatus,
     ErrorEnvelope,
@@ -57,13 +61,21 @@ from .security import (
     verify_request,
 )
 from .service_base import BackendServiceBase
+from .license_signing import issue_activation_key, load_license_private_key
 
 
 class ContractHarness(BackendServiceBase):
     """In-memory executable specification. It is not a production backend."""
 
-    def __init__(self, *, clock: Callable[[], int] | None = None, limits: ContractLimits = LIMITS):
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], int] | None = None,
+        limits: ContractLimits = LIMITS,
+        license_signing_private_key_base64: str | None = None,
+    ):
         super().__init__(clock=clock, limits=limits)
+        self.license_signing_key = load_license_private_key(license_signing_private_key_base64)
         self.licenses: dict[str, LicenseRecord] = {}
         self.installations: dict[UUID, Installation] = {}
         self.installation_by_license: dict[str, UUID] = {}
@@ -276,6 +288,46 @@ class ContractHarness(BackendServiceBase):
             self.remember_response("sync", principal, headers, 200, content)
             return 200, content
 
+    def execute_issue_client_license(
+        self,
+        installation: Installation,
+        payload: ClientLicenseIssueRequest,
+        headers: SignedHeaders,
+    ) -> tuple[int, dict]:
+        if installation.role != Role.ADMIN:
+            raise ROLE_FORBIDDEN()
+        if self.license_signing_key is None:
+            raise SIGNING_UNAVAILABLE()
+        now = self.clock()
+        if payload.expires_at_epoch_ms <= now * 1000 or payload.expires_at_epoch_ms > (now + 3_650 * 86_400) * 1000:
+            raise VALIDATION_FAILED()
+        principal = str(installation.installation_id)
+        with self.lock:
+            remembered = self.idempotent_result("issue_client_license", principal, headers)
+            if remembered is not None:
+                return remembered.status, remembered.body
+            activation_key = issue_activation_key(
+                self.license_signing_key,
+                android_id=payload.android_id,
+                expires_at_epoch_ms=payload.expires_at_epoch_ms,
+                license_type=payload.license_type,
+            )
+            self.add_license(
+                activation_key,
+                role=Role.CLIENT,
+                expires_at=payload.expires_at_epoch_ms // 1000,
+            )
+            response = ClientLicenseIssueResponse(
+                activation_key=activation_key,
+                android_id=payload.android_id,
+                expires_at_epoch_ms=payload.expires_at_epoch_ms,
+                license_type=payload.license_type,
+                server_time=now,
+            )
+            content = response.model_dump(mode="json")
+            self.remember_response("issue_client_license", principal, headers, 200, content)
+            return 200, content
+
     def _cursor_sequence(self, cursor: str | None, owner_id: str) -> int:
         if cursor is None:
             return 0
@@ -480,6 +532,44 @@ def create_contract_app(
             window_seconds=60,
         )
         status, content = harness.execute_sync(installation, payload, headers)
+        return JSONResponse(status_code=status, content=content)
+
+    @app.post(
+        "/v1/admin/client-licenses/issue",
+        response_model=ClientLicenseIssueResponse,
+        responses=error_responses,
+    )
+    async def issue_client_license(
+        request: Request,
+        payload: ClientLicenseIssueRequest,
+        x_tvde_installation_id: Annotated[str, Header(alias="X-TVDE-Installation-Id")],
+        x_tvde_timestamp: Annotated[str, Header(alias="X-TVDE-Timestamp")],
+        x_tvde_nonce: Annotated[str, Header(alias="X-TVDE-Nonce")],
+        idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+        x_tvde_body_sha256: Annotated[str, Header(alias="X-TVDE-Body-SHA256")],
+        x_tvde_signature: Annotated[str, Header(alias="X-TVDE-Signature")],
+    ) -> JSONResponse:
+        body = await read_body(request)
+        try:
+            installation_id = UUID(x_tvde_installation_id)
+        except ValueError:
+            raise INSTALLATION_NOT_FOUND()
+        installation = harness.get_installation(installation_id)
+        if installation is None:
+            raise INSTALLATION_NOT_FOUND()
+        if installation.revoked:
+            raise INSTALLATION_REVOKED()
+        harness.validate_installation_license(installation)
+        headers = harness.signed_headers(request, body)
+        harness.authenticate(
+            request=request,
+            body=body,
+            principal=str(installation_id),
+            public_key=installation.public_key,
+            headers=headers,
+        )
+        harness.rate_limit("issue_client_license", str(installation_id), maximum=30, window_seconds=60)
+        status, content = harness.execute_issue_client_license(installation, payload, headers)
         return JSONResponse(status_code=status, content=content)
 
     return app

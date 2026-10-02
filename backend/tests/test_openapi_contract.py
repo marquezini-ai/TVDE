@@ -16,7 +16,11 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_committed_openapi_is_valid_and_contains_only_approved_endpoints():
     specification = json.loads((ROOT / "openapi.json").read_text(encoding="utf-8"))
     validate(specification)
-    assert set(specification["paths"]) == {"/v1/installations/register", "/v1/sync"}
+    assert set(specification["paths"]) == {
+        "/v1/installations/register",
+        "/v1/sync",
+        "/v1/admin/client-licenses/issue",
+    }
     assert specification["x-tvde-signature-protocol"]["algorithm"] == "ECDSA P-256 with SHA-256"
 
 

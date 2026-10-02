@@ -25,6 +25,7 @@ class CloudBackendSettings:
     projection_batch_size: int = 20
     spreadsheet_id: str | None = None
     spreadsheet_tab: str = "Events"
+    license_signing_private_key_base64: str | None = None
     limits: ContractLimits = LIMITS
 
     def __post_init__(self) -> None:
@@ -57,4 +58,5 @@ class CloudBackendSettings:
             projection_batch_size=int(os.getenv("TVDE_PROJECTION_BATCH_SIZE", "20")),
             spreadsheet_id=spreadsheet_id,
             spreadsheet_tab=os.getenv("TVDE_GOOGLE_SHEET_TAB", "Events").strip() or "Events",
+            license_signing_private_key_base64=os.getenv("TVDE_LICENSE_SIGNING_PRIVATE_KEY_BASE64", "").strip() or None,
         )

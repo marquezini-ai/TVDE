@@ -24,6 +24,7 @@ LICENSE_EXPIRED = lambda: ContractError("LICENSE_EXPIRED", 403, "The activation 
 LICENSE_REVOKED = lambda: ContractError("LICENSE_REVOKED", 403, "The activation license is revoked.")
 LICENSE_ALREADY_BOUND = lambda: ContractError("LICENSE_ALREADY_BOUND", 409, "The license is bound to another device key.")
 ROLE_FORBIDDEN = lambda: ContractError("ROLE_FORBIDDEN", 403, "The installation is not authorized for this operation.")
+SIGNING_UNAVAILABLE = lambda: ContractError("SIGNING_UNAVAILABLE", 503, "License signing is temporarily unavailable.", True)
 IDEMPOTENCY_CONFLICT = lambda: ContractError("IDEMPOTENCY_CONFLICT", 409, "The idempotency key was reused with another body.")
 INVALID_CURSOR = lambda: ContractError("INVALID_CURSOR", 409, "The cursor is invalid for this owner.")
 CURSOR_EXPIRED = lambda: ContractError("CURSOR_EXPIRED", 410, "The cursor has expired.")
