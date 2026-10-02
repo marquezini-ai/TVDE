@@ -79,7 +79,7 @@ class TripSyncRepository @Inject constructor(
         if (!sheetsClient.isConfigured) return@withContext SyncGatewayResult.NotConfigured
         uploadPending()
         downloadAll()
-        SyncGatewayResult.Completed
+        SyncGatewayResult.Completed()
     }
 
     private fun syncKey(entry: com.daniel.tvdeinsight.domain.model.OfferHistoryEntry): String =

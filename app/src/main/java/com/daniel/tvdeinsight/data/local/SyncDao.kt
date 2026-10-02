@@ -69,12 +69,45 @@ interface SyncDao {
     @Transaction
     suspend fun startAttempt(attempt: SyncAttemptEntity, eventIds: List<String>, nowMillis: Long) {
         insertAttempt(attempt)
-        updateAttempts(
-            eventIds = eventIds,
-            state = SyncOutboxState.IN_FLIGHT.name,
-            nextAttemptAtMillis = nowMillis,
-            errorCode = null,
-            updatedAtMillis = nowMillis
-        )
+        if (eventIds.isNotEmpty()) {
+            updateAttempts(
+                eventIds = eventIds,
+                state = SyncOutboxState.IN_FLIGHT.name,
+                nextAttemptAtMillis = nowMillis,
+                errorCode = null,
+                updatedAtMillis = nowMillis
+            )
+        }
+    }
+
+    @Transaction
+    suspend fun completeAttempt(
+        sentEventIds: List<String>,
+        rejectedEvents: Map<String, String>,
+        ownChanges: List<BackendOwnChangeEntity>,
+        newState: BackendSyncStateEntity,
+        nowMillis: Long
+    ) {
+        if (sentEventIds.isNotEmpty()) markSent(sentEventIds, nowMillis)
+        rejectedEvents.forEach { (eventId, code) -> markPermanentFailure(eventId, code.take(80), nowMillis) }
+        if (ownChanges.isNotEmpty()) saveOwnChanges(ownChanges)
+        saveState(newState)
+        clearAttempt()
+    }
+
+    @Transaction
+    suspend fun resetExpiredCursor(eventIds: List<String>, nowMillis: Long) {
+        if (eventIds.isNotEmpty()) {
+            updateAttempts(
+                eventIds = eventIds,
+                state = SyncOutboxState.PENDING.name,
+                nextAttemptAtMillis = nowMillis,
+                errorCode = "CURSOR_RESET",
+                updatedAtMillis = nowMillis
+            )
+        }
+        val current = state() ?: BackendSyncStateEntity()
+        saveState(current.copy(confirmedCursor = null))
+        clearAttempt()
     }
 }

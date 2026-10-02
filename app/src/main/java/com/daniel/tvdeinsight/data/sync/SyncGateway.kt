@@ -9,6 +9,8 @@ interface SyncGateway {
 }
 
 sealed interface SyncGatewayResult {
-    data object Completed : SyncGatewayResult
+    data class Completed(val hasMore: Boolean = false, val pendingEvents: Int = 0) : SyncGatewayResult
+    data class RetryLater(val code: String, val retryAfterSeconds: Long? = null) : SyncGatewayResult
+    data class PermanentFailure(val code: String) : SyncGatewayResult
     data object NotConfigured : SyncGatewayResult
 }
