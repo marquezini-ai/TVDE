@@ -8,7 +8,7 @@ import com.daniel.tvdeinsight.logging.AppLogger
 import com.daniel.tvdeinsight.data.network.NetworkStatusMonitor
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
-import com.daniel.tvdeinsight.worker.SheetsSyncScheduler
+import com.daniel.tvdeinsight.worker.BackendSyncScheduler
 import com.example.cameraseguranca.CameraSafetyDependencies
 import com.example.cameraseguranca.data.RecordingStorage
 import com.example.cameraseguranca.service.RecordingService
@@ -39,8 +39,8 @@ class TvdeInsightApplication : Application(), Configuration.Provider {
             "Aplicação iniciada: versão=${BuildConfig.VERSION_NAME}, " +
                 "código=${BuildConfig.VERSION_CODE}, admin=${BuildConfig.IS_ADMIN_APP}"
         )
-        AppLogger.info("Sheets configurado no build: ${com.daniel.tvdeinsight.BuildConfig.GOOGLE_SHEETS_SPREADSHEET_ID.isNotBlank() && com.daniel.tvdeinsight.BuildConfig.GOOGLE_SERVICE_ACCOUNT_ASSET.isNotBlank()}")
-        SheetsSyncScheduler.scheduleHourly(this)
+        BackendSyncScheduler.schedule(this)
+        BackendSyncScheduler.enqueueImmediate(this)
         androidx.work.WorkManager.getInstance(this).enqueueUniquePeriodicWork(
             "offer-screenshot-retention", androidx.work.ExistingPeriodicWorkPolicy.KEEP,
             androidx.work.PeriodicWorkRequestBuilder<com.daniel.tvdeinsight.worker.OfferScreenshotCleanupWorker>(

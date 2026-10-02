@@ -1,7 +1,6 @@
 package com.daniel.tvdeinsight
 
 import android.Manifest
-import android.app.AlarmManager
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ComponentName
@@ -30,7 +29,7 @@ import com.daniel.tvdeinsight.service.accessibility.UberOfferAccessibilityServic
 import com.daniel.tvdeinsight.service.notification.BoltOfferNotificationListener
 import com.daniel.tvdeinsight.ui.TvdeInsightApp
 import com.daniel.tvdeinsight.ui.screens.MainViewModel
-import com.daniel.tvdeinsight.worker.SheetsSyncScheduler
+import com.daniel.tvdeinsight.worker.BackendSyncScheduler
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.launch
@@ -77,14 +76,6 @@ class MainActivity : ComponentActivity() {
         val powerManager = getSystemService(PowerManager::class.java)
         val granted = powerManager?.isIgnoringBatteryOptimizations(packageName) == true
         AppLogger.info("Resultado da otimização de bateria: desativada=$granted")
-        requestExactAlarmPermissionIfNeeded()
-    }
-    private val requestExactAlarmSettings = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) {
-        val granted = SheetsSyncScheduler.canScheduleExactAlarms(this)
-        AppLogger.info("Resultado da permissão de alarmes exatos: concedida=$granted")
-        SheetsSyncScheduler.scheduleHourly(this)
         requestBoltNotificationAccessIfNeeded()
     }
     private val createLogDocument = registerForActivityResult(
@@ -103,9 +94,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppLogger.info("MainActivity criada")
-        serviceManager = MainServiceManager(this, ::uploadTripsWhenMonitoringStarts)
+        serviceManager = MainServiceManager(this, ::syncTripsWhenMonitoringStarts)
         startFirstUsePermissionFlowIfNeeded()
-        restoreSheetsSync()
+        restoreBackendSync()
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -161,19 +152,19 @@ class MainActivity : ComponentActivity() {
         createLogDocument.launch("tvde-insight-${System.currentTimeMillis()}.log")
     }
 
-    private fun uploadTripsWhenMonitoringStarts() {
-        AppLogger.info("Monitorização iniciada: sincronização Google Sheets colocada na fila")
-        SheetsSyncScheduler.enqueuePendingSync(this)
+    private fun syncTripsWhenMonitoringStarts() {
+        AppLogger.info("Monitorização iniciada: sincronização backend colocada na fila")
+        BackendSyncScheduler.enqueueImmediate(this)
     }
 
     /**
      * Mantém o histórico já existente sincronizado, mesmo quando a monitorização
      * de ofertas ainda não foi iniciada nesta abertura da aplicação.
      */
-    private fun restoreSheetsSync() {
-        SheetsSyncScheduler.scheduleHourly(this)
-        AppLogger.info("Sheets: sincronização de recuperação colocada na fila com requisito de Internet")
-        SheetsSyncScheduler.enqueuePendingSync(this)
+    private fun restoreBackendSync() {
+        BackendSyncScheduler.schedule(this)
+        AppLogger.info("Backend: sincronização de recuperação colocada na fila com requisito de Internet")
+        BackendSyncScheduler.enqueueImmediate(this)
     }
 
     /**
@@ -252,13 +243,13 @@ class MainActivity : ComponentActivity() {
 
     private fun requestBatteryOptimizationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            requestExactAlarmPermissionIfNeeded()
+            requestBoltNotificationAccessIfNeeded()
             return
         }
         val powerManager = getSystemService(PowerManager::class.java)
         if (powerManager?.isIgnoringBatteryOptimizations(packageName) == true) {
             AppLogger.info("Otimização de bateria já desativada para a aplicação")
-            requestExactAlarmPermissionIfNeeded()
+            requestBoltNotificationAccessIfNeeded()
             return
         }
 
@@ -278,42 +269,10 @@ class MainActivity : ComponentActivity() {
                 )
             } catch (error: ActivityNotFoundException) {
                 AppLogger.error("Não foi possível abrir as definições de otimização de bateria", error)
-                requestExactAlarmPermissionIfNeeded()
+                requestBoltNotificationAccessIfNeeded()
             }
         } catch (error: SecurityException) {
             AppLogger.error("O sistema recusou o pedido de otimização de bateria", error)
-            requestExactAlarmPermissionIfNeeded()
-        }
-    }
-
-    private fun requestExactAlarmPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            SheetsSyncScheduler.scheduleHourly(this)
-            requestBoltNotificationAccessIfNeeded()
-            return
-        }
-        if (SheetsSyncScheduler.canScheduleExactAlarms(this)) {
-            AppLogger.info("Permissão de alarmes exatos já concedida")
-            SheetsSyncScheduler.scheduleHourly(this)
-            requestBoltNotificationAccessIfNeeded()
-            return
-        }
-
-        AppLogger.info("Solicitando ao utilizador a permissão de alarmes exatos")
-        try {
-            requestExactAlarmSettings.launch(
-                Intent(
-                    Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
-                    Uri.parse("package:$packageName")
-                )
-            )
-        } catch (error: ActivityNotFoundException) {
-            AppLogger.warn("Definições de alarmes exatos indisponíveis; mantendo modo inexacto", error)
-            SheetsSyncScheduler.scheduleHourly(this)
-            requestBoltNotificationAccessIfNeeded()
-        } catch (error: SecurityException) {
-            AppLogger.warn("Sistema recusou abrir a permissão de alarmes exatos", error)
-            SheetsSyncScheduler.scheduleHourly(this)
             requestBoltNotificationAccessIfNeeded()
         }
     }

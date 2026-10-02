@@ -24,7 +24,15 @@ class BackendRegistrationManager @Inject constructor(
 
     suspend fun registerPending(): RegistrationOutcome {
         val current = store.state()
-        current.installationId?.let { return RegistrationOutcome.Active(it) }
+        current.installationId?.let { installationId ->
+            if (current.status == BackendRegistrationStatus.ACTIVE) {
+                return RegistrationOutcome.Active(installationId)
+            }
+            return RegistrationOutcome.PermanentFailure(
+                current.status,
+                current.lastErrorCode ?: "REGISTRATION_NOT_ACTIVE"
+            )
+        }
         val activationKey = store.pendingActivationKey() ?: return RegistrationOutcome.ActivationRequired
         val allowKeyCreation = current.keyThumbprint == null
         val keyPair = try {

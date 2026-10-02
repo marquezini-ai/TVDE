@@ -6,7 +6,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import com.daniel.tvdeinsight.logging.AppLogger
-import com.daniel.tvdeinsight.worker.SheetsSyncScheduler
+import com.daniel.tvdeinsight.worker.BackendSyncScheduler
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -63,7 +63,7 @@ class NetworkStatusMonitor @Inject constructor(
         if (NetworkStatusPolicy.shouldEnqueuePendingSync(wasOnline, isOnline)) {
             // O trabalho fica persistido e condicionado a rede; o callback só o acorda,
             // não executa chamadas de rede no processo nem cria ciclos de polling.
-            SheetsSyncScheduler.enqueuePendingSync(appContext)
+            BackendSyncScheduler.enqueueImmediate(appContext)
         }
     }
 

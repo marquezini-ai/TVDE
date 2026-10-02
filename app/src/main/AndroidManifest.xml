@@ -13,9 +13,6 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Necessária para o WorkManager avaliar a restrição NetworkType.CONNECTED. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- Alarmes horários pontuais para sincronização com o Google Sheets. -->
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Permite pedir ao utilizador que retire a otimização de bateria para o monitor funcionar em segundo plano. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- A posição do telefone é registada no histórico das duas apps. -->
@@ -97,23 +94,6 @@
             android:name="com.example.cameraseguranca.service.RecordingCleanupJobService"
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
-
-        <receiver
-            android:name=".worker.SheetsSyncAlarmReceiver"
-            android:enabled="true"
-            android:exported="false" />
-
-        <receiver
-            android:name=".worker.SheetsRescheduleReceiver"
-            android:enabled="true"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-                <action android:name="android.intent.action.TIME_SET" />
-                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
-            </intent-filter>
-        </receiver>
 
         <provider
             android:name="androidx.core.content.FileProvider"
