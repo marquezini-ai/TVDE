@@ -1,6 +1,6 @@
-# TVDE Insight local backend — Phase 3B.2
+# TVDE Insight backend — Phase 3
 
-This directory is isolated from Android. It contains the stable API v1 contract, its in-memory specification and a persistent local SQLite implementation. It does **not** contain Google Sheets access, Firestore, Cloud Run configuration, production configuration or credentials.
+This directory is isolated from Android. It contains the stable API v1 contract, the persistent local SQLite implementation and the cloud-test Firestore/Cloud Run/Google Sheets adapters. It contains no production configuration or credentials.
 
 Architecture:
 
@@ -8,9 +8,12 @@ Architecture:
 FastAPI v1
   -> PersistentBackend service
     -> repository ports
-      -> SQLiteStorage + versioned migrations
+      -> SQLiteStorage + versioned migrations (local)
+      -> FirestoreStorage (cloud test)
         -> transactional events/changes/idempotency/outbox
-  -> FakeProjectionWorker -> FakeGoogleSink
+  -> projection worker
+      -> FakeGoogleSink (local tests)
+      -> Google Sheets test document (cloud test)
 ```
 
 ## Local verification
@@ -58,6 +61,8 @@ Authoritative artifacts:
 
 - `docs/ADR-001-secure-sync-api-v1.md`: decisions and protocol semantics.
 - `docs/ADR-002-local-persistent-backend.md`: persistence, transactions and recovery.
+- `docs/ADR-003-cloud-test-firestore.md`: cloud storage decision.
+- `docs/CLOUD-TEST.md`: test infrastructure, IAM, deploy, costs and recovery.
 - `docs/FILTER-COMPATIBILITY.md`: Android filter mapping and open limitations.
 - `openapi.json`: machine-readable API surface.
 - `src/tvde_contract/models.py`: executable DTO constraints.
@@ -68,4 +73,4 @@ Authoritative artifacts:
 - `src/tvde_contract/projector.py`: fake outbox consumer and fake sink.
 - `tests/`: contract and security proof matrix.
 
-The harness and fake projector must never be deployed. Cloud work remains outside Phase 3B.2.
+The harness and fake projector must never be deployed. The cloud configuration refuses any environment other than `cloud-test`.

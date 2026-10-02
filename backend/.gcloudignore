@@ -1,0 +1,16 @@
+.gcloudignore
+.git
+.venv/
+**/__pycache__/
+.pytest_cache/
+docs/
+migrations/
+tests/
+tools/
+*.db
+*.sqlite3
+*.json
+*.pem
+*.p12
+*.jks
+*.keystore

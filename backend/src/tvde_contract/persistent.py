@@ -3,9 +3,9 @@ from __future__ import annotations
 import hashlib
 import logging
 import secrets
-import sqlite3
 import time
 from collections.abc import Callable
+from typing import Any
 from uuid import UUID, uuid4
 
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -53,14 +53,15 @@ class PersistentBackend(BackendServiceBase):
 
     def __init__(
         self,
-        settings: BackendSettings,
+        settings: BackendSettings | Any,
         *,
         clock: Callable[[], int] | None = None,
         failure_injector: FailureInjector | None = None,
+        storage: Any | None = None,
     ):
         super().__init__(clock=clock, limits=settings.limits)
         self.settings = settings
-        self.storage = SQLiteStorage(settings.database_path, settings.migrations_path)
+        self.storage = storage or SQLiteStorage(settings.database_path, settings.migrations_path)
         self.failure_injector = failure_injector or (lambda _: None)
         self.logger = logging.getLogger("tvde_backend.persistence")
 
@@ -82,6 +83,27 @@ class PersistentBackend(BackendServiceBase):
 
     def get_installation(self, installation_id: UUID) -> Installation | None:
         return self.storage.get_installation(installation_id)
+
+    def rate_limit(self, scope: str, principal: str, *, maximum: int, window_seconds: int) -> None:
+        persistent_limiter = getattr(self.storage, "consume_rate_limit", None)
+        if persistent_limiter is None:
+            super().rate_limit(
+                scope,
+                principal,
+                maximum=maximum,
+                window_seconds=window_seconds,
+            )
+            return
+        if not persistent_limiter(
+            scope,
+            principal,
+            maximum=maximum,
+            window_seconds=window_seconds,
+            now=self.clock(),
+        ):
+            from .errors import RATE_LIMITED
+
+            raise RATE_LIMITED(window_seconds)
 
     def validate_installation_license(self, installation: Installation) -> None:
         license_record = self.storage.get_license(installation.activation_key)
@@ -153,7 +175,8 @@ class PersistentBackend(BackendServiceBase):
     ) -> tuple[int, dict]:
         now = self.clock()
         self.failure_injector("registration_before_transaction")
-        with self.storage.transaction() as connection:
+
+        def operation(connection):
             existing_response = self.storage.get_idempotency(
                 connection, "register", key_thumbprint, headers.idempotency_key, now
             )
@@ -203,8 +226,11 @@ class PersistentBackend(BackendServiceBase):
                 now,
             )
             self.failure_injector("registration_before_commit")
+            return 200, content
+
+        result = self.storage.run_transaction(operation)
         self.failure_injector("registration_after_commit")
-        return 200, content
+        return result
 
     def execute_sync(
         self,
@@ -215,7 +241,8 @@ class PersistentBackend(BackendServiceBase):
         now = self.clock()
         principal = str(installation.installation_id)
         self.failure_injector("sync_before_transaction")
-        with self.storage.transaction() as connection:
+
+        def operation(connection):
             existing_response = self.storage.get_idempotency(
                 connection, "sync", principal, headers.idempotency_key, now
             )
@@ -228,7 +255,7 @@ class PersistentBackend(BackendServiceBase):
                     principal=safe_principal(principal),
                     endpoint="sync",
                 )
-                return remembered
+                return remembered, []
             self.failure_injector("sync_during_processing")
             event_results: list[EventResult] = []
             for event in payload.events:
@@ -283,6 +310,9 @@ class PersistentBackend(BackendServiceBase):
                 now,
             )
             self.failure_injector("sync_before_commit")
+            return (200, content), event_results
+
+        result, event_results = self.storage.run_transaction(operation)
         self.failure_injector("sync_after_commit")
         log_event(
             self.logger,
@@ -294,11 +324,11 @@ class PersistentBackend(BackendServiceBase):
             rejected=sum(item.status == EventStatus.REJECTED for item in event_results),
         )
         self.failure_injector("sync_before_response")
-        return 200, content
+        return result
 
     def _persist_event(
         self,
-        connection: sqlite3.Connection,
+        connection: Any,
         owner_id: str,
         event: OfferEvent,
         now: int,
@@ -327,7 +357,7 @@ class PersistentBackend(BackendServiceBase):
 
     def _cursor_sequence(
         self,
-        connection: sqlite3.Connection,
+        connection: Any,
         cursor: str | None,
         owner_id: str,
         now: int,

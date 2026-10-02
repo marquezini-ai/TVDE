@@ -6,7 +6,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator, TypeVar
 from uuid import UUID
 
 from .domain import IdempotentResponse, Installation, LicenseRecord, StoredCursor
@@ -22,6 +22,9 @@ class OutboxItem:
     event_id: UUID
     event: OfferEvent
     attempts: int
+
+
+T = TypeVar("T")
 
 
 class SQLiteStorage:
@@ -56,6 +59,10 @@ class SQLiteStorage:
             except Exception:
                 connection.rollback()
                 raise
+
+    def run_transaction(self, operation: Callable[[sqlite3.Connection], T]) -> T:
+        with self.transaction() as connection:
+            return operation(connection)
 
     def put_license(
         self,
