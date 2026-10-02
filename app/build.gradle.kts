@@ -1,10 +1,4 @@
 import java.util.Properties
-import java.io.File
-
-val localProperties = Properties().apply {
-    val file = rootProject.file("local.properties")
-    if (file.isFile) file.inputStream().use(::load)
-}
 
 plugins {
     alias(libs.plugins.android.application)
@@ -44,13 +38,6 @@ val hasReleaseSigning = releaseSigningPropertiesFile.isFile &&
     releaseSigningProperties.getProperty("keyPassword", "").isNotBlank() &&
     rootProject.file(releaseStorePath).isFile
 fun String.asBuildConfigString(): String = "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
-val sheetsSpreadsheetId = localProperties.getProperty("googleSheetsSpreadsheetId", "").trim()
-val serviceAccountPath = localProperties.getProperty("googleServiceAccountJsonPath", "").trim()
-val serviceAccountFile = serviceAccountPath.takeIf { it.isNotBlank() }?.let { File(it) }
-if (serviceAccountFile?.isFile == true) {
-    android.sourceSets.getByName("main").assets.srcDir(serviceAccountFile.parentFile)
-}
-
 android {
     namespace = "com.daniel.tvdeinsight"
     compileSdk = 35
@@ -62,18 +49,11 @@ android {
         versionCode = 172
         versionName = "0.5.69-unified"
 
-        buildConfigField("String", "GOOGLE_SHEETS_SPREADSHEET_ID", sheetsSpreadsheetId.asBuildConfigString())
         buildConfigField(
             "String",
             "BACKEND_BASE_URL",
             "https://tvde-backend-test-api-ad7wubyn2a-no.a.run.app".asBuildConfigString()
         )
-        buildConfigField(
-            "String",
-            "GOOGLE_SERVICE_ACCOUNT_ASSET",
-            (serviceAccountFile?.name.orEmpty()).asBuildConfigString()
-        )
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

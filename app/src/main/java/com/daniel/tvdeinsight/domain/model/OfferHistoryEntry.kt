@@ -30,7 +30,7 @@ data class OfferHistoryEntry(
     val isStopRejection: Boolean = false,
     /** Nome do ficheiro privado da captura da oferta; nunca é enviado para a Sheet. */
     val screenshotFileName: String? = null,
-    /** Identificador do dispositivo que originou a linha no Google Sheets. */
+    /** Identificador local do dispositivo que originou o registo sincronizado. */
     val sourceDeviceId: String = ""
 ) {
     companion object {
