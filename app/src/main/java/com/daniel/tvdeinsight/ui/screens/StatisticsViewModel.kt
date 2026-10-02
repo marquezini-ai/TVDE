@@ -1,8 +1,14 @@
 package com.daniel.tvdeinsight.ui.screens
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.daniel.tvdeinsight.data.repository.OfferAnalysisStore
+import com.daniel.tvdeinsight.data.sync.backend.AggregateQueryPayload
+import com.daniel.tvdeinsight.data.sync.backend.BackendAggregateQueryStore
+import com.daniel.tvdeinsight.data.sync.backend.BackendAggregatesRepository
+import com.daniel.tvdeinsight.data.sync.backend.CategoryFilterPayload
+import com.daniel.tvdeinsight.data.sync.backend.GlobalAggregatesPayload
 import com.daniel.tvdeinsight.domain.location.PortugueseMunicipalityCatalog
 import com.daniel.tvdeinsight.domain.location.PortugueseMunicipalityMatcher
 import com.daniel.tvdeinsight.domain.model.DecisionType
@@ -10,6 +16,7 @@ import com.daniel.tvdeinsight.domain.model.EvaluationCriterion
 import com.daniel.tvdeinsight.domain.model.OfferHistoryEntry
 import com.daniel.tvdeinsight.domain.model.OfferPlatform
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
@@ -19,7 +26,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.stateIn
+import com.daniel.tvdeinsight.worker.BackendSyncScheduler
 
 enum class StatisticsMetric(val label: String) {
     VALUE_PER_KM("Quilómetros"),
@@ -126,18 +137,36 @@ data class StatisticsUiState(
 )
 
 @HiltViewModel
+@OptIn(kotlinx.coroutines.FlowPreview::class)
 class StatisticsViewModel @Inject constructor(
-    analysisStore: OfferAnalysisStore
+    analysisStore: OfferAnalysisStore,
+    aggregatesRepository: BackendAggregatesRepository,
+    private val aggregateQueryStore: BackendAggregateQueryStore,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
     private val filters = MutableStateFlow(StatisticsFilters())
 
     val uiState: StateFlow<StatisticsUiState> = combine(
         analysisStore.history,
         analysisStore.globalHistory,
+        aggregatesRepository.aggregates,
         filters
-    ) { ownHistory, globalHistory, selected ->
-        StatisticsCalculator.calculate(ownHistory, globalHistory, selected)
+    ) { ownHistory, globalHistory, aggregates, selected ->
+        StatisticsCalculator.calculate(ownHistory, globalHistory, aggregates, selected)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StatisticsUiState())
+
+    init {
+        viewModelScope.launch {
+            filters
+                .debounce(300)
+                .distinctUntilChanged()
+                .collect { selected ->
+                    if (aggregateQueryStore.save(StatisticsAggregateQueryMapper.from(selected))) {
+                        BackendSyncScheduler.enqueueImmediate(context)
+                    }
+                }
+        }
+    }
 
     fun togglePlatform(platform: OfferPlatform) = updateFilters {
         val updated = if (platform in platforms) platforms - platform else platforms + platform
@@ -188,6 +217,37 @@ internal object StatisticsCalculator {
             heatmap = global.heatmap,
             dailyCalendar = global.dailyCalendar,
             recordedDates = global.recordedDates
+        )
+    }
+
+    fun calculate(
+        ownHistory: List<OfferHistoryEntry>,
+        legacyGlobalHistory: List<OfferHistoryEntry>,
+        aggregates: GlobalAggregatesPayload?,
+        filters: StatisticsFilters,
+        nowMillis: Long = System.currentTimeMillis(),
+        municipalityMatcher: PortugueseMunicipalityMatcher = PortugueseMunicipalityCatalog.matcher
+    ): StatisticsUiState {
+        val fallback = calculate(ownHistory, legacyGlobalHistory, filters, nowMillis, municipalityMatcher)
+        if (aggregates == null || aggregates.query != StatisticsAggregateQueryMapper.from(filters, nowMillis)) {
+            return fallback
+        }
+        return fallback.copy(
+            pickupMunicipalities = aggregates.pickupMunicipalities.map {
+                PickupMunicipalityStatistic(it.municipality, it.medianCents / 100.0, it.eventCount)
+            },
+            heatmap = aggregates.heatmap.mapNotNull {
+                val day = runCatching { DayOfWeek.valueOf(it.dayOfWeek) }.getOrNull() ?: return@mapNotNull null
+                val shift = runCatching { StatisticsShift.valueOf(it.shift) }.getOrNull() ?: return@mapNotNull null
+                HeatmapCell(day, shift, it.medianCents?.div(100.0), it.eventCount)
+            },
+            dailyCalendar = aggregates.dailyCalendar.mapNotNull {
+                val date = runCatching { LocalDate.parse(it.date) }.getOrNull() ?: return@mapNotNull null
+                DailyMetricStatistic(date, it.averageCents?.div(100.0), it.eventCount)
+            },
+            recordedDates = aggregates.recordedDates.mapNotNullTo(linkedSetOf()) {
+                runCatching { LocalDate.parse(it) }.getOrNull()
+            }
         )
     }
 
@@ -439,4 +499,29 @@ internal object StatisticsCalculator {
         EvaluationCriterion.VIAGEM_LONGA -> "Viagem longa"
         EvaluationCriterion.VALOR_MINIMO -> "Valor mínimo"
     }
+}
+
+internal object StatisticsAggregateQueryMapper {
+    fun from(filters: StatisticsFilters, nowMillis: Long = System.currentTimeMillis()): AggregateQueryPayload {
+        val zone = ZoneId.systemDefault()
+        val today = Instant.ofEpochMilli(nowMillis).atZone(zone).toLocalDate()
+        val end = (filters.endDateMillis ?: filters.startDateMillis)?.asLocalDate() ?: today
+        val start = filters.startDateMillis?.asLocalDate() ?: end.minusDays(29)
+        return AggregateQueryPayload(
+            platforms = filters.platforms
+                .filter { it == OfferPlatform.UBER || it == OfferPlatform.BOLT }
+                .sortedBy(OfferPlatform::ordinal)
+                .map(OfferPlatform::name),
+            metric = filters.metric.name,
+            valueMode = filters.valueMode.name,
+            shift = filters.shift.name,
+            cardColor = filters.cardColor.name,
+            category = filters.category?.let { CategoryFilterPayload(it.platform.name, it.name) },
+            startDate = start.toString(),
+            endDate = end.toString()
+        )
+    }
+
+    private fun Long.asLocalDate(): LocalDate =
+        Instant.ofEpochMilli(this).atZone(java.time.ZoneOffset.UTC).toLocalDate()
 }

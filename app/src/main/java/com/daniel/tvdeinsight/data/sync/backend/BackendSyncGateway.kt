@@ -9,7 +9,6 @@ import com.daniel.tvdeinsight.data.sync.SyncGateway
 import com.daniel.tvdeinsight.data.sync.SyncGatewayResult
 import com.daniel.tvdeinsight.data.sync.crypto.DeviceKeyStore
 import com.daniel.tvdeinsight.data.sync.crypto.DeviceKeyStoreException
-import java.time.LocalDate
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -26,7 +25,8 @@ class BackendSyncGateway @Inject constructor(
     private val deviceIdentity: DeviceIdentity,
     private val registrationStore: BackendRegistrationStore,
     private val keyStore: DeviceKeyStore,
-    private val api: BackendSyncApi
+    private val api: BackendSyncApi,
+    private val aggregateQueryStore: BackendAggregateQueryStore
 ) : SyncGateway {
     private val mutex = Mutex()
     private val json = BackendHttpClient.json
@@ -83,7 +83,7 @@ class BackendSyncGateway @Inject constructor(
         val request = BackendSyncRequest(
             cursor = state?.confirmedCursor,
             events = validEvents,
-            aggregateQuery = defaultAggregateQuery()
+            aggregateQuery = aggregateQueryStore.current()
         )
         val attempt = SyncAttemptEntity(
             idempotencyKey = UUID.randomUUID().toString(),
@@ -99,19 +99,8 @@ class BackendSyncGateway @Inject constructor(
         response: BackendSyncResponse,
         expectedEventIds: List<String>
     ): SyncGatewayResult {
-        val resultsById = response.eventResults.associateBy { it.eventId }
-        if (resultsById.size != response.eventResults.size || resultsById.keys != expectedEventIds.toSet()) {
-            return SyncGatewayResult.RetryLater("INVALID_EVENT_RESULTS")
-        }
-        val sent = response.eventResults
-            .filter { it.status == "ACCEPTED" || it.status == "DUPLICATE" }
-            .map { it.eventId }
-        val rejected = response.eventResults
-            .filter { it.status == "REJECTED" }
-            .associate { it.eventId to (it.code ?: "EVENT_REJECTED") }
-        if (sent.size + rejected.size != expectedEventIds.size) {
-            return SyncGatewayResult.RetryLater("INVALID_EVENT_STATUS")
-        }
+        val validated = BackendSyncResponseValidator.validate(response, expectedEventIds)
+            ?: return SyncGatewayResult.RetryLater("INVALID_EVENT_RESULTS")
         val now = System.currentTimeMillis()
         val ownChanges = response.ownChanges.map { change ->
             BackendOwnChangeEntity(
@@ -129,10 +118,11 @@ class BackendSyncGateway @Inject constructor(
             lastSuccessfulSyncAtMillis = now,
             serverTimeEpochSeconds = response.serverTime
         )
-        database.syncDao().completeAttempt(sent, rejected, ownChanges, state, now)
+        database.syncDao().completeAttempt(validated.sent, validated.rejected, ownChanges, state, now)
         val pendingCount = database.syncDao().pendingCount()
+        val aggregateRefreshPending = response.globalAggregates.query != aggregateQueryStore.current()
         return SyncGatewayResult.Completed(
-            hasMore = response.hasMore || pendingCount > 0,
+            hasMore = response.hasMore || pendingCount > 0 || aggregateRefreshPending,
             pendingEvents = pendingCount
         )
     }
@@ -141,7 +131,7 @@ class BackendSyncGateway @Inject constructor(
         failure: BackendSyncApiResult.Failure,
         eventIds: List<String>
     ): SyncGatewayResult {
-        if (failure.code == "CURSOR_EXPIRED" || failure.code == "INVALID_CURSOR") {
+        if (BackendSyncResponseValidator.invalidatesCursor(failure.code)) {
             database.syncDao().resetExpiredCursor(eventIds, System.currentTimeMillis())
             return SyncGatewayResult.RetryLater("CURSOR_RESET")
         }
@@ -156,19 +146,6 @@ class BackendSyncGateway @Inject constructor(
             )
         }
         return SyncGatewayResult.PermanentFailure(failure.code)
-    }
-
-    private fun defaultAggregateQuery(): AggregateQueryPayload {
-        val end = LocalDate.now()
-        return AggregateQueryPayload(
-            platforms = listOf("UBER", "BOLT"),
-            metric = "VALUE_PER_KM",
-            valueMode = "FREE",
-            shift = "ALL",
-            cardColor = "ALL",
-            startDate = end.minusDays(29).toString(),
-            endDate = end.toString()
-        )
     }
 
     private companion object {

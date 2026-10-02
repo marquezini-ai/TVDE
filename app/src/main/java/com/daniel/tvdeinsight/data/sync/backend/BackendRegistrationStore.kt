@@ -6,6 +6,8 @@ import androidx.security.crypto.MasterKey
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 enum class BackendRegistrationStatus {
     NOT_CONFIGURED,
@@ -41,9 +43,13 @@ class BackendRegistrationStore @Inject constructor(
         EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
+    private val _state = MutableStateFlow(readState())
+    val stateFlow: StateFlow<BackendRegistrationState> = _state
 
     @Synchronized
-    fun state(): BackendRegistrationState = BackendRegistrationState(
+    fun state(): BackendRegistrationState = _state.value
+
+    private fun readState(): BackendRegistrationState = BackendRegistrationState(
         status = preferences.getString(STATUS, null)
             ?.let { runCatching { BackendRegistrationStatus.valueOf(it) }.getOrNull() }
             ?: BackendRegistrationStatus.NOT_CONFIGURED,
@@ -63,6 +69,7 @@ class BackendRegistrationStore @Inject constructor(
             .putString(STATUS, BackendRegistrationStatus.PENDING.name)
             .remove(LAST_ERROR_CODE)
             .apply()
+        _state.value = readState()
     }
 
     @Synchronized
@@ -73,6 +80,7 @@ class BackendRegistrationStore @Inject constructor(
         val existing = preferences.getString(KEY_THUMBPRINT, null)
         check(existing == null || existing == thumbprint) { "Stored device identity does not match Keystore" }
         preferences.edit().putString(KEY_THUMBPRINT, thumbprint).apply()
+        _state.value = readState()
     }
 
     @Synchronized
@@ -86,6 +94,7 @@ class BackendRegistrationStore @Inject constructor(
             .remove(PENDING_ACTIVATION_KEY)
             .remove(LAST_ERROR_CODE)
             .apply()
+        _state.value = readState()
     }
 
     @Synchronized
@@ -95,6 +104,7 @@ class BackendRegistrationStore @Inject constructor(
             .putString(LAST_ERROR_CODE, errorCode.take(80))
             .also { if (discardActivationKey) it.remove(PENDING_ACTIVATION_KEY) }
             .apply()
+        _state.value = readState()
     }
 
     private companion object {

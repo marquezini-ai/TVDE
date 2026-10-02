@@ -5,9 +5,13 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface SyncDao {
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertOutbox(entity: SyncOutboxEntity)
+
     @Query(
         "SELECT * FROM sync_outbox WHERE state = 'PENDING' AND nextAttemptAtMillis <= :nowMillis " +
             "ORDER BY createdAtMillis ASC LIMIT :limit"
@@ -20,6 +24,9 @@ interface SyncDao {
     @Query("SELECT * FROM sync_attempt WHERE singletonId = 1")
     suspend fun activeAttempt(): SyncAttemptEntity?
 
+    @Query("SELECT * FROM sync_outbox WHERE eventId = :eventId")
+    suspend fun outboxEvent(eventId: String): SyncOutboxEntity?
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertAttempt(entity: SyncAttemptEntity)
 
@@ -29,11 +36,17 @@ interface SyncDao {
     @Query("SELECT * FROM backend_sync_state WHERE singletonId = 1")
     suspend fun state(): BackendSyncStateEntity?
 
+    @Query("SELECT * FROM backend_sync_state WHERE singletonId = 1")
+    fun observeState(): Flow<BackendSyncStateEntity?>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveState(entity: BackendSyncStateEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveOwnChanges(entities: List<BackendOwnChangeEntity>)
+
+    @Query("SELECT * FROM backend_own_change ORDER BY sequence")
+    suspend fun ownChanges(): List<BackendOwnChangeEntity>
 
     @Query(
         "UPDATE sync_outbox SET state = :state, attemptCount = attemptCount + 1, " +

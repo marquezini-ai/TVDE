@@ -77,6 +77,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
@@ -106,6 +107,9 @@ fun SettingsScreen(paddingValues: PaddingValues, viewModel: MainViewModel = hilt
     val themeMode by viewModel.themeMode.collectAsState(initial = ThemeMode.AUTOMATIC)
     val licenseViewModel: LicenseViewModel = hiltViewModel()
     val licenseState by licenseViewModel.licenseState.collectAsState()
+    val backendViewModel: BackendConnectionViewModel = hiltViewModel()
+    val backendState by backendViewModel.state.collectAsState()
+    var backendActivationKey by rememberSaveable { mutableStateOf("") }
     var draft by remember(savedSettings) { mutableStateOf(savedSettings) }
     var appearanceMenuExpanded by rememberSaveable { mutableStateOf(false) }
     var screenshotRetentionMenuExpanded by rememberSaveable { mutableStateOf(false) }
@@ -180,6 +184,49 @@ fun SettingsScreen(paddingValues: PaddingValues, viewModel: MainViewModel = hilt
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 14.sp
             )
+        }
+
+        Card(
+            shape = MaterialTheme.shapes.large,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth(),
+            elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+        ) {
+            Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Sincronização segura", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text(
+                    "Estado: ${backendState.status.name}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 13.sp
+                )
+                backendState.lastErrorCode?.let { code ->
+                    Text("Código: $code", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+                if (backendState.installationId == null) {
+                    OutlinedTextField(
+                        value = backendActivationKey,
+                        onValueChange = { backendActivationKey = it.trim() },
+                        label = { Text("Chave de ativação do backend") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Button(
+                        enabled = backendActivationKey.length in 20..4096,
+                        onClick = {
+                            runCatching { backendViewModel.configure(backendActivationKey) }
+                                .onSuccess { backendActivationKey = "" }
+                                .onFailure {
+                                    Toast.makeText(context, "Chave inválida.", Toast.LENGTH_LONG).show()
+                                }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Ligar ao backend de teste")
+                    }
+                }
+            }
         }
 
         Card(
