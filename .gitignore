@@ -36,6 +36,7 @@ app/build-*/
 
 # Generated distribution artifacts
 /apks/
+/dist/
 *.apk
 *.aab
 

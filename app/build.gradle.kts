@@ -45,8 +45,8 @@ android {
         applicationId = "com.daniel.tvdeinsight"
         minSdk = 29
         targetSdk = 35
-        versionCode = 172
-        versionName = "0.5.69-unified"
+        versionCode = 173
+        versionName = "0.6.0-unified"
 
         buildConfigField(
             "String",

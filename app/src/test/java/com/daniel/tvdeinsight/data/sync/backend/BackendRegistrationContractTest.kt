@@ -30,7 +30,7 @@ class BackendRegistrationContractTest {
                 x = "axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpY",
                 y = "T-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU"
             ),
-            client = BackendClientDescriptor("com.daniel.tvdeinsight", "0.5.69-unified")
+            client = BackendClientDescriptor("com.daniel.tvdeinsight", "0.6.0-unified")
         )
 
         assertEquals(
@@ -39,7 +39,7 @@ class BackendRegistrationContractTest {
                 "\"x\":\"axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpY\"," +
                 "\"y\":\"T-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU\"}," +
                 "\"client\":{\"app_id\":\"com.daniel.tvdeinsight\"," +
-                "\"app_version\":\"0.5.69-unified\",\"api_version\":1}}",
+                "\"app_version\":\"0.6.0-unified\",\"api_version\":1}}",
             BackendHttpClient.json.encodeToString(RegistrationRequest.serializer(), request)
         )
     }
