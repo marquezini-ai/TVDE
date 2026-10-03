@@ -1,9 +1,25 @@
 package com.daniel.tvdeinsight.data.sync.backend
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BackendRegistrationContractTest {
+    @Test
+    fun `admin license issue contract preserves exact fields`() {
+        val request = ClientLicenseIssueRequest("abcdef1234567890", 1_900_000_000_000L)
+        val encoded = BackendHttpClient.json.encodeToString(ClientLicenseIssueRequest.serializer(), request)
+        assertTrue(encoded.contains("\"android_id\":\"abcdef1234567890\""))
+        assertTrue(encoded.contains("\"license_type\":\"CUSTOM\""))
+
+        val response = BackendHttpClient.json.decodeFromString(
+            ClientLicenseIssueResponse.serializer(),
+            """{"activation_key":"payload.signature","android_id":"abcdef1234567890","expires_at_epoch_ms":1900000000000,"license_type":"CUSTOM","server_time":1800000000}"""
+        )
+        assertEquals("payload.signature", response.activationKey)
+        assertEquals(1_900_000_000_000L, response.expiresAtEpochMillis)
+    }
+
     @Test
     fun requestJson_matchesOpenApiFieldNames() {
         val request = RegistrationRequest(

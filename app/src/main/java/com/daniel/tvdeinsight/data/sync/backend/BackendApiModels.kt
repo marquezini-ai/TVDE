@@ -65,3 +65,19 @@ data class BackendErrorBody(
 
 @Serializable
 data class BackendErrorEnvelope(val error: BackendErrorBody)
+
+@Serializable
+data class ClientLicenseIssueRequest(
+    @SerialName("android_id") val androidId: String,
+    @SerialName("expires_at_epoch_ms") val expiresAtEpochMillis: Long,
+    @SerialName("license_type") val licenseType: String = "CUSTOM"
+)
+
+@Serializable
+data class ClientLicenseIssueResponse(
+    @SerialName("activation_key") val activationKey: String,
+    @SerialName("android_id") val androidId: String,
+    @SerialName("expires_at_epoch_ms") val expiresAtEpochMillis: Long,
+    @SerialName("license_type") val licenseType: String,
+    @SerialName("server_time") val serverTime: Long
+)

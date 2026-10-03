@@ -48,13 +48,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.daniel.tvdeinsight.BuildConfig
 import com.daniel.tvdeinsight.R
 import com.daniel.tvdeinsight.license.ActivationKeyCrypto
 import com.daniel.tvdeinsight.license.AdminLicenseRecord
 import com.daniel.tvdeinsight.license.LicenseState
 import com.daniel.tvdeinsight.license.LicenseStatus
-import com.daniel.tvdeinsight.license.LicenseType
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -158,8 +156,8 @@ fun AdminActivationCard() {
     var phone by rememberSaveable { mutableStateOf("") }
     var generatedKey by rememberSaveable { mutableStateOf("") }
     var resultMessage by rememberSaveable { mutableStateOf("") }
+    var isSubmitting by rememberSaveable { mutableStateOf(false) }
     var showActiveLicenses by rememberSaveable { mutableStateOf(false) }
-    val isKeyConfigured = BuildConfig.ADMIN_LICENSE_PRIVATE_KEY_BASE64.isNotBlank()
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Card(
@@ -173,13 +171,6 @@ fun AdminActivationCard() {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text("Ativação", fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                if (!isKeyConfigured) {
-                    Text(
-                        "Chave privada do Administrador não configurada neste APK.",
-                        color = MaterialTheme.colorScheme.error,
-                        fontSize = 14.sp
-                    )
-                }
                 OutlinedTextField(
                     value = androidId,
                     onValueChange = { androidId = it.trim().lowercase() },
@@ -216,37 +207,28 @@ fun AdminActivationCard() {
                 Button(
                     modifier = Modifier.fillMaxWidth(),
                     enabled = androidId.isNotBlank() && validityDays.isNotBlank() && fullName.isNotBlank() &&
-                        phone.isNotBlank() && isKeyConfigured,
+                        phone.isNotBlank() && !isSubmitting,
                     onClick = {
-                        resultMessage = runCatching {
-                            val days = requireNotNull(validityDays.toIntOrNull()) {
-                                "Indique uma validade entre 1 e 99 dias."
+                        val days = validityDays.toIntOrNull()
+                        if (days == null || days !in 1..99) {
+                            resultMessage = "Indique uma validade entre 1 e 99 dias."
+                            return@Button
+                        }
+                        isSubmitting = true
+                        resultMessage = "Gerando licença no servidor..."
+                        scope.launch {
+                            val result = licensesViewModel.issueLicense(fullName, phone, androidId, days)
+                            result.onSuccess { record ->
+                                generatedKey = record.activationKey
+                                resultMessage = "Chave gerada. Expira em ${record.expiresAtMillis.toDateTimeText()}."
+                            }.onFailure { error ->
+                                generatedKey = ""
+                                resultMessage = error.message ?: "Não foi possível gerar a chave."
                             }
-                            require(days in 1..99) { "Indique uma validade entre 1 e 99 dias." }
-                            val createdAt = System.currentTimeMillis()
-                            val expiry = ActivationKeyCrypto.expirationFromDays(createdAt, days)
-                            val key = ActivationKeyCrypto.generate(
-                                androidId = androidId,
-                                expiresAtMillis = expiry,
-                                licenseType = LicenseType.CUSTOM,
-                                privateKeyBase64 = BuildConfig.ADMIN_LICENSE_PRIVATE_KEY_BASE64
-                            )
-                            generatedKey = key
-                            licensesViewModel.registerGeneratedLicense(
-                                fullName = fullName,
-                                phone = phone,
-                                androidId = androidId,
-                                createdAtMillis = createdAt,
-                                expiresAtMillis = expiry,
-                                activationKey = key
-                            )
-                            "Chave gerada. Expira em ${expiry.toDateTimeText()}."
-                        }.getOrElse { error ->
-                            generatedKey = ""
-                            error.message ?: "Não foi possível gerar a chave."
+                            isSubmitting = false
                         }
                     }
-                ) { Text("Gerar Chave") }
+                ) { Text(if (isSubmitting) "Gerando..." else "Gerar Chave") }
 
                 if (resultMessage.isNotBlank()) {
                     Text(
@@ -287,20 +269,17 @@ fun AdminActivationCard() {
                 backupLauncher.launch("TVDE-Insight-licencas-ativas-${System.currentTimeMillis()}.json")
             },
             onRenewLicense = { record, days ->
-                val createdAt = System.currentTimeMillis()
-                val expiresAt = ActivationKeyCrypto.expirationFromDays(createdAt, days)
-                val key = ActivationKeyCrypto.generate(
-                    androidId = record.androidId,
-                    expiresAtMillis = expiresAt,
-                    licenseType = LicenseType.CUSTOM,
-                    privateKeyBase64 = BuildConfig.ADMIN_LICENSE_PRIVATE_KEY_BASE64
-                )
-                licensesViewModel.renewGeneratedLicense(
-                    recordId = record.id,
-                    createdAtMillis = createdAt,
-                    expiresAtMillis = expiresAt,
-                    activationKey = key
-                )
+                scope.launch {
+                    val result = licensesViewModel.renewLicense(record, days)
+                    Toast.makeText(
+                        context,
+                        result.fold(
+                            onSuccess = { "Licença renovada até ${it.expiresAtMillis.toDateTimeText()}." },
+                            onFailure = { it.message ?: "Não foi possível renovar a licença." }
+                        ),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
             }
         )
     }
@@ -312,7 +291,7 @@ private fun AdminActiveLicensesDialog(
     onDismiss: () -> Unit,
     onCopyKey: (String) -> Unit,
     onCreateBackup: () -> Unit,
-    onRenewLicense: (AdminLicenseRecord, Int) -> AdminLicenseRecord
+    onRenewLicense: (AdminLicenseRecord, Int) -> Unit
 ) {
     var selectedRecord by remember { mutableStateOf<AdminLicenseRecord?>(null) }
     var phoneQuery by rememberSaveable { mutableStateOf("") }
@@ -403,8 +382,10 @@ private fun AdminActiveLicensesDialog(
                     record = record,
                     onBack = { selectedRecord = null },
                     onCopyKey = { onCopyKey(record.activationKey) },
-                    onRenewLicense = { days -> onRenewLicense(record, days) },
-                    onRecordRenewed = { renewedRecord -> selectedRecord = renewedRecord }
+                    onRenewLicense = { days ->
+                        onRenewLicense(record, days)
+                        selectedRecord = null
+                    }
                 )
             }
         }
@@ -416,8 +397,7 @@ private fun AdminLicenseDetails(
     record: AdminLicenseRecord,
     onBack: () -> Unit,
     onCopyKey: () -> Unit,
-    onRenewLicense: (Int) -> AdminLicenseRecord,
-    onRecordRenewed: (AdminLicenseRecord) -> Unit
+    onRenewLicense: (Int) -> Unit
 ) {
     var showRenewalDialog by rememberSaveable(record.id, record.createdAtMillis) { mutableStateOf(false) }
     Column(
@@ -454,10 +434,8 @@ private fun AdminLicenseDetails(
         AdminLicenseRenewalDialog(
             onDismiss = { showRenewalDialog = false },
             onRenew = { days ->
-                val renewal = runCatching { onRenewLicense(days) }
-                renewal.onSuccess(onRecordRenewed)
-                renewal.exceptionOrNull()?.message
-                    ?: if (renewal.isSuccess) null else "Não foi possível renovar a licença."
+                onRenewLicense(days)
+                null
             }
         )
     }

@@ -23,7 +23,6 @@ val embeddedPublicKeyBase64 = rootProject.file("license-public-key.txt")
 val licensePublicKeyBase64 = licenseProperties
     .getProperty("licensePublicKeyBase64", "")
     .ifBlank { embeddedPublicKeyBase64 }
-val adminPrivateKeyBase64 = licenseProperties.getProperty("adminPrivateKeyBase64", "")
 val releaseSigningPropertiesFile = rootProject.file("keystore.properties")
 val releaseSigningProperties = Properties().apply {
     if (releaseSigningPropertiesFile.isFile) {
@@ -84,7 +83,6 @@ android {
             dimension = "applicationRole"
             buildConfigField("boolean", "IS_ADMIN_APP", "false")
             buildConfigField("String", "LICENSE_PUBLIC_KEY_BASE64", licensePublicKeyBase64.asBuildConfigString())
-            buildConfigField("String", "ADMIN_LICENSE_PRIVATE_KEY_BASE64", "\"\"")
             resValue("string", "app_name", "TVDE Insight")
         }
         create("admin") {
@@ -92,7 +90,6 @@ android {
             applicationIdSuffix = ".admin"
             buildConfigField("boolean", "IS_ADMIN_APP", "true")
             buildConfigField("String", "LICENSE_PUBLIC_KEY_BASE64", licensePublicKeyBase64.asBuildConfigString())
-            buildConfigField("String", "ADMIN_LICENSE_PRIVATE_KEY_BASE64", adminPrivateKeyBase64.asBuildConfigString())
             resValue("string", "app_name", "TVDE Insight Admin")
         }
     }
