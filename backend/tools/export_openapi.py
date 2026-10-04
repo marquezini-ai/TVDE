@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
 from tvde_contract.harness import create_contract_app
 
 
-def main() -> None:
+def render_openapi() -> str:
     app = create_contract_app(clock=lambda: 0)
     specification = app.openapi()
     specification["info"]["description"] = (
@@ -25,8 +26,20 @@ def main() -> None:
         "syncPrincipal": "X-TVDE-Installation-Id",
         "signedPath": "Absolute path only; query and fragment are forbidden",
     }
+    return json.dumps(specification, indent=2, sort_keys=True) + "\n"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Export or verify the committed OpenAPI contract")
+    parser.add_argument("--check", action="store_true", help="fail when openapi.json is stale")
+    args = parser.parse_args()
     target = Path(__file__).resolve().parents[1] / "openapi.json"
-    target.write_text(json.dumps(specification, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    rendered = render_openapi()
+    if args.check:
+        if not target.is_file() or target.read_text(encoding="utf-8") != rendered:
+            raise SystemExit("backend/openapi.json is stale; run backend/tools/export_openapi.py")
+        return
+    target.write_text(rendered, encoding="utf-8")
 
 
 if __name__ == "__main__":

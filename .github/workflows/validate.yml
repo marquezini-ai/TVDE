@@ -1,0 +1,48 @@
+name: Validate
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Install backend
+        run: python -m pip install -e "backend[test]"
+      - name: Test backend
+        run: python -m pytest backend/tests -q
+      - name: Verify OpenAPI
+        run: python backend/tools/export_openapi.py --check
+      - name: Scan tracked files for secrets
+        run: python scripts/check_tracked_secrets.py
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Test and build Client Debug
+        run: ./gradlew --no-daemon --max-workers=1 -Pkotlin.compiler.execution.strategy=in-process testClientDebugUnitTest assembleClientDebug
+      - name: Test and build Admin Debug
+        run: ./gradlew --no-daemon --max-workers=1 -Pkotlin.compiler.execution.strategy=in-process testAdminDebugUnitTest assembleAdminDebug
+      - name: Lint debug variants
+        run: ./gradlew --no-daemon --max-workers=1 lintClientDebug lintAdminDebug
