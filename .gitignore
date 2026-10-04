@@ -84,3 +84,4 @@ backend/**/*.sqlite
 backend/**/*.sqlite3
 backend/**/*.sqlite-wal
 backend/**/*.sqlite-shm
+**/__pycache__/

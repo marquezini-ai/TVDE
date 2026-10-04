@@ -19,6 +19,8 @@ Nenhuma vulnerabilidade crítica foi confirmada pela validação local. Isso nã
 - Revisar avisos de ícones Compose e propriedades de status/navigation bar quando houver trabalho de UI.
 - Executar auditoria periódica com ferramentas de dependência e advisories no CI ou em tarefa dedicada, sem atualização automática.
 
+O lint final registrou zero erros e 100 avisos por variante. A maior parte é atualização disponível de dependência ou recomendação de migração. Eles não bloquearam a release e devem ser tratados em lotes separados, começando por segurança, retenção de dados e comportamento em segundo plano.
+
 ## Regra de atualização
 
 Uma atualização deve indicar motivação, compatibilidade, testes executados e rollback. Não misturar atualização de dependências com correções de captura, OCR ou sync.

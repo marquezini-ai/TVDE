@@ -85,6 +85,7 @@ Os testes cloud exigem projeto isolado, autenticação e `TVDE_RUN_CLOUD_TESTS=1
 - [Disaster recovery](docs/DISASTER-RECOVERY.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Guia para manutenção por IA](docs/AI-MAINTENANCE-GUIDE.md)
+- [Baseline profissional](docs/PROFESSIONAL-BASELINE.md)
 - [Changelog](CHANGELOG.md)
 
 APKs e bancos locais não são versionados. O Git preserva código e documentação; dados persistentes exigem a política específica de backup.
