@@ -64,7 +64,13 @@ tvde-insight-sync-*.json
 *service-account*.json
 *service_account*.json
 /secrets/
+/backups/
+/exports/
+/dumps/
 /credentials/
+*.sqlite-wal
+*.sqlite-shm
+*.dump
 
 # Isolated backend development artifacts
 backend/.venv/

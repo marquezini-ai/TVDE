@@ -1,38 +1,90 @@
-# TVDE Insight 0.4.12-alpha
+# TVDE Insight
 
-Aplicação Android para ajudar motoristas TVDE a classificar ofertas Uber Driver e Bolt Driver.
+Aplicação Android que captura ofertas visíveis da Uber Driver e Bolt Driver, calcula a rentabilidade segundo critérios do motorista e apresenta uma decisão informativa. A aplicação não aceita, rejeita ou envia cliques às plataformas.
 
-## Aplicações
+Baseline profissional: `0.6.0-unified`, `versionCode 173`. Consulte o [relatório da release](docs/releases/0.6.0-unified.md).
 
-- `client`: aplicação licenciada para os motoristas.
-- `admin`: aplicação de administração e emissão/renovação de licenças.
-
-## Deteção de ofertas
-
-- Android 12L e inferiores: Uber e Bolt exclusivamente por acessibilidade.
-- Android 13 e superiores: Bolt por acessibilidade e Uber exclusivamente por captura global + OCR.
-- O OCR não guarda imagens. Uma oferta Uber só é publicada depois de duas leituras completas e coincidentes, separadas por 250 ms.
-- Releituras rápidas, diagnóstico de capturas parciais e aquecimento do ML Kit reduzem atrasos e tornam falhas visíveis no log.
-
-## Funcionalidades principais
-
-- Critérios independentes para quilómetros, hora, recolha, valor mínimo, viagens longas e viagens com paradas.
-- Custo do veículo, quilómetro livre, valor líquido e portagens Bolt.
-- Histórico detalhado, deduplicado e com localização no momento da oferta.
-- Rota Google Maps: localização no momento da oferta → recolha → destino.
-- Estatísticas por plataforma, categoria, período, turno, tipo de card e município de recolha.
-- Exportação das ofertas filtradas para Excel.
-- Licenciamento cliente/admin e backup das licenças.
-- Log persistente e partilha do diagnóstico completo.
-
-## Compilar
-
-Abra o projeto no Android Studio com JDK 17 ou execute:
+## Arquitetura
 
 ```text
-gradlew.bat testClientDebugUnitTest testAdminDebugUnitTest assembleClientDebug assembleAdminDebug
+Android
+  -> captura local: Accessibility / Notification Listener / OCR
+  -> parsers e RuleEngine
+  -> Room + outbox
+  -> BackendSyncGateway + WorkManager
+  -> Cloud Run / FastAPI
+  -> Firestore, fonte de verdade
+  -> projection outbox
+  -> Google Sheets, somente projeção
 ```
 
-O serviço precisa das permissões de sobreposição, acessibilidade e localização. A aplicação nunca aceita nem rejeita corridas e não envia cliques para Uber/Bolt.
+Detalhes: [Arquitetura](docs/ARCHITECTURE.md) e [ADRs](backend/docs/).
 
-Consulte [LICENSE_SETUP.md](LICENSE_SETUP.md) antes de distribuir as variantes licenciadas.
+## Variantes
+
+| Papel | Pacote | Uso |
+| --- | --- | --- |
+| Client | `com.daniel.tvdeinsight` | Aplicação licenciada do motorista |
+| Admin | `com.daniel.tvdeinsight.admin` | Administração e emissão de licenças |
+
+Cada papel possui build `debug` e `release`. Release exige assinatura configurada localmente.
+
+## Requisitos verificados
+
+- Android: `minSdk 29`, `targetSdk 35`, `compileSdk 35`.
+- JDK 17. O baseline foi criado com Microsoft OpenJDK `17.0.20`.
+- Gradle Wrapper `8.9` e Android Gradle Plugin `8.7.3`.
+- Python `>=3.12,<3.15`; a validação final usou Python `3.13.15`.
+- Conta Google Cloud autorizada apenas para deploy ou operação cloud.
+
+## Configuração local
+
+1. Configure o Android SDK em `local.properties`. Esse arquivo não é versionado.
+2. Copie `keystore.properties.example` para `keystore.properties` e informe o keystore de release. Não versione o arquivo nem o keystore.
+3. Para licenciamento, siga [LICENSE_SETUP.md](LICENSE_SETUP.md). A chave pública pode entrar no APK; a chave privada nunca pode.
+4. O Android usa o backend definido em `BACKEND_BASE_URL`. Credenciais privadas Google não pertencem ao APK.
+5. Para o backend, use variáveis de ambiente ou Secret Manager conforme [backend/docs/CLOUD-TEST.md](backend/docs/CLOUD-TEST.md).
+
+## Build Android
+
+Em máquinas com RAM limitada, compile sequencialmente. O build conjunto das quatro variantes excedeu a memória de uma máquina com 16 GB, enquanto os comandos abaixo funcionaram:
+
+```powershell
+cmd /c "gradlew.bat --no-daemon --max-workers=1 -Dorg.gradle.jvmargs=-Xmx2048m -Pkotlin.compiler.execution.strategy=in-process testClientDebugUnitTest assembleClientDebug assembleClientRelease"
+cmd /c "gradlew.bat --no-daemon --max-workers=1 -Dorg.gradle.jvmargs=-Xmx2048m -Pkotlin.compiler.execution.strategy=in-process testAdminDebugUnitTest assembleAdminDebug assembleAdminRelease"
+```
+
+## Backend local
+
+```powershell
+py -3.13 -m venv backend/.venv
+backend/.venv/Scripts/python.exe -m pip install -e "backend[test]"
+$env:TVDE_BACKEND_ENV = "development"
+$env:TVDE_DATABASE_PATH = "C:\safe-local-path\tvde-local.sqlite3"
+backend/.venv/Scripts/python.exe -m uvicorn tvde_contract.main:app --host 127.0.0.1 --port 8080
+```
+
+Use apenas chaves sintéticas nos testes locais. Mais detalhes em [backend/README.md](backend/README.md).
+
+## Testes
+
+```powershell
+gradlew.bat testClientDebugUnitTest testAdminDebugUnitTest
+backend/.venv/Scripts/python.exe -m pytest backend/tests -q
+backend/.venv/Scripts/python.exe backend/tools/export_openapi.py --check
+backend/.venv/Scripts/python.exe scripts/check_tracked_secrets.py
+```
+
+Os testes cloud exigem projeto isolado, autenticação e `TVDE_RUN_CLOUD_TESTS=1`. Não são executados automaticamente no CI.
+
+## Operação e recuperação
+
+- [Checklist de release](docs/RELEASE-CHECKLIST.md)
+- [Backup](docs/BACKUP.md)
+- [Restore e rollback](docs/RESTORE.md)
+- [Disaster recovery](docs/DISASTER-RECOVERY.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Guia para manutenção por IA](docs/AI-MAINTENANCE-GUIDE.md)
+- [Changelog](CHANGELOG.md)
+
+APKs e bancos locais não são versionados. O Git preserva código e documentação; dados persistentes exigem a política específica de backup.
