@@ -6,7 +6,7 @@
 - Versão funcional: `0.6.0-unified`.
 - `versionCode`: `173`.
 - Commit dos APKs: `dbbdbdcaec17799c8212b2d565117c95ea59aac9`.
-- Tag: `v0.6.0-unified`, quando publicada conforme o relatório da release.
+- Tag anotada: `v0.6.0-unified`, apontando para o commit dos APKs.
 - Backend validado: Cloud Run revision `tvde-backend-test-api-00008-c94`.
 
 ## Evidência
